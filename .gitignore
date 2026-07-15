@@ -1,1 +1,24 @@
-"datasets/ .venv/ .ipynb_checkpoints/ *.pt __pycache__/ .vscode/" 
+# Ne pas envoyer l'environnement virtuel local s'il est dans le dossier
+.conda/
+venv/
+env/
+plastic_env/
+
+# Ne pas envoyer les données locales temporaires, de cache ou de test
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+
+# Ne pas envoyer d'éventuels dossiers de données ou d'images locaux
+/data/
+dataset/
+*.png
+*.jpg
+*.jpeg
+*.txt
+*.yaml
+*.zip
+
+# Ne pas envoyer les fichiers système ou d'IDE
+.vscode/
+.DS_Store
