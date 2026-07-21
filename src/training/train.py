@@ -25,14 +25,15 @@ def launch_training():
     # On configure des valeurs minimales pour valider le pipeline sans crash
     results = model.train(
         data=config_path,      # Fichier de config YAML
-        epochs=3,              # 3 époques suffisent pour valider que le code fonctionne
+        epochs=100,            # 100 époques pour un entraînement plus complet
         imgsz=640,             # Résolution standard d'entraînement YOLO
-        batch=8,               # Taille du batch (8 images par pas pour préserver la VRAM)
+        batch=16,               # Taille du batch (16 images par pas pour préserver la VRAM)
         device=0,              # Force l'utilisation du premier GPU Nvidia (met 'cpu' si pas de GPU)
-        workers=2,             # Nombre de threads pour charger les images sans saturer le CPU Windows
+        workers=4,             # Nombre de threads pour charger les images sans saturer le CPU Windows
         project="runs/train",  # Dossier où seront sauvegardés tes graphiques et tes poids 'best.pt'
-        name="pixel_odyssey_v1",
-        plots=True             # Génère automatiquement les courbes Precision-Recall et les pertes
+        name="pixel_odyssey_v1_full",
+        plots=True,             # Génère automatiquement les courbes Precision-Recall et les pertes
+        patience=20,             # Arrêt anticipé si pas d'amélioration sur 20 époques
     )
     
     print("--- ✅ ENTRAÎNEMENT DE VALIDATION TERMINÉ ---")
