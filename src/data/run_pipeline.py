@@ -14,9 +14,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.data.slicer import PlasticImageSlicer
 
 # --- CONFIGURATION DES CHEMINS (Sur ton disque E:) ---
-BASE_DIR = r"E:\PixelOdyssey\dataset"
-RAW_INPUTS_DIR = os.path.join(BASE_DIR, "raw_inputs")
-PROCESSED_DIR = os.path.join(BASE_DIR, "processed_dataset")
+BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
+RAW_INPUTS_DIR = os.path.join(BASE_DIR, "annotated_dataset")
+PROCESSED_DIR = os.path.join(BASE_DIR, "sliced_dataset")
 
 def run_slicing_pipeline():
     # 1. Initialisation du Slicer avec tes paramètres validés
@@ -54,7 +54,7 @@ def run_slicing_pipeline():
                 os.makedirs(label_dst_dir, exist_ok=True)
 
                 # Liste des images de la campagne
-                images = [f for f in os.listdir(img_src_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                images = [f for f in os.listdir(img_src_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.tif'))]
                 
                 for img_name in images:
                     base_name, _ = os.path.splitext(img_name)
