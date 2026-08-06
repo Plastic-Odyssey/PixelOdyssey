@@ -1,24 +1,49 @@
-# Ne pas envoyer l'environnement virtuel local s'il est dans le dossier
+# ==========================================
+# ENVIRONNEMENTS & CACHE PYTHON
+# ==========================================
 .conda/
 venv/
 env/
 plastic_env/
-
-# Ne pas envoyer les données locales temporaires, de cache ou de test
-.ipynb_checkpoints/
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
 
-# Ne pas envoyer d'éventuels dossiers de données ou d'images locaux
-/data/
-dataset/
-*.png
-*.jpg
-*.jpeg
-*.txt
-*.yaml
-*.zip
+# ==========================================
+# DONNÉES LOURDES & RÉSULTATS (Offline Edge)
+# ==========================================
+# Exclure le dataset d'images et labels
+datasets/
+data/
 
-# Ne pas envoyer les fichiers système ou d'IDE
-.vscode/
+# Exclure les poids des modèles lourds (.pt, .onnx, etc.)
+models/
+*.pt
+*.onnx
+*.engine
+
+# Exclure tous les fichiers générés
+output/
+outputs/
+runs/
+*.html
+*.geojson
+*.tif
+*.tiff
+
+# ==========================================
+# EXCLUSIONS DIVERSES & OS
+# ==========================================
 .DS_Store
+Thumbs.db
+desktop.ini
+*.zip
+*.tar.gz
+
+# ==========================================
+# VS CODE (Garder la config partagée)
+# ==========================================
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json

@@ -1,0 +1,13 @@
+# PixelOdyssey - Configuration du Dataset pour YOLOv11-seg
+
+# Chemins d'accès racine et dossiers de split
+path: E:\PixelOdyssey\3. Processed dataset\processed_dataset # Chemin relatif depuis le futur script d'entraînement
+train: images/train
+val: images/val
+test : images/test
+
+names:
+  0: Mousse_Fragments_Souple
+  1: Plastique_Rigide
+  2: Cordage_Filet
+  3: NonPlastique  
