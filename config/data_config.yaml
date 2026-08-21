@@ -12,129 +12,142 @@ train: images/train
 val: images/val
 test : images/test
 
+# ============================================================================
+# TAXONOMIE CIBLE — 2e révision (21/08/2026), regroupement par FORME plutôt
+# que par matière/rigidité.
+#
+# Décidée à partir d'un audit chiffré du dataset réel (src/data/dataset_audit.py,
+# run du 21/08/2026 sur 540 images parentes) plutôt qu'à l'intuition seule :
+# nombre d'instances par classe brute + coefficient de variation de l'aire et
+# du ratio largeur/hauteur (une classe à forme vraiment récurrente a un CV
+# bas ; un fourre-tout de fragments a un CV élevé). Décisions notables issues
+# de cet audit :
+#   - "casques" (0 instance réelle) et "Bouées pieuvre" (0 instance réelle)
+#     sont des classes fantômes dans les data.yaml de lot - jamais dessinées
+#     dans une seule annotation. Placées par précaution (casques -> fourre-
+#     tout, Bouées pieuvre -> Bouee) au cas où un futur lot en amène, mais
+#     aucun exemple d'entraînement à attendre d'elles aujourd'hui.
+#   - "Sceau" (5 instances) trop rare pour une classe à part ou pour un
+#     regroupement dédié avec casques ("déchet rigide volumineux" envisagé
+#     puis abandonné, forme trop différente entre un seau et un casque de
+#     toute façon) -> fourre-tout.
+#   - "bouchons" (124 instances, cv_ratio_lxh=0.158 - le plus bas du dataset)
+#     et "Petit bidon" (61 instances, cv_ratio_lxh=0.255) ont une forme bien
+#     plus cohérente que prévu -> classes dédiées plutôt que fourre-tout.
+#   - "bouees" (12 instances) et "flotteurs" (18 instances) ont chacun une
+#     forme très cohérente (cv_ratio_lxh 0.10 et 0.18) mais trop peu
+#     d'exemples séparément -> regroupés en une seule classe "Bouee" (30
+#     instances combinées).
+#   - "Cordage" a le cv_aire le plus élevé du dataset (2.135) mais c'est un
+#     artefact de la métrique (une corde enroulée vs étalée a des boîtes
+#     englobantes très différentes pour un objet tout aussi reconnaissable) -
+#     pas un signal contre le garder séparé.
+#
+# names ci-dessous = les super-classes cibles (ce que le modèle apprend).
+# ============================================================================
 names:
-  0: Mousse_Fragments_Souple
-  1: Plastique_Rigide
-  2: Cordage_Filet
-
-# ============================================================================
-# CLASSE "NonPlastique" RETIRÉE TEMPORAIREMENT (2026-08-19)
-#
-# Elle existait auparavant comme classe cible n°3, mais aucune classe brute ne
-# lui était mappée dans raw_to_target : elle ne recevait donc jamais un seul
-# exemple d'entraînement (0 instance dans tous les splits, ligne/colonne vide
-# dans confusion_matrix.png du run pixel_odyssey_v1_nano) - un cas classique de
-# classe fantôme qui gonfle artificiellement le nombre de classes déclarées
-# sans jamais pouvoir être apprise. Décision : l'exclure du référentiel pour le
-# moment plutôt que de la laisser trainer sans être ni comblée ni assumée.
-#
-# Pour la réintroduire un jour :
-#   1. Décider quelles classes brutes (raw_classes) doivent y être mappées
-#      dans raw_to_target ci-dessous (ex: un futur sous-type de déchet qui ne
-#      rentre dans aucune des 3 super-classes actuelles).
-#   2. La rajouter dans `names` (elle redeviendra l'ID le plus haut, 3).
-#   3. Relancer `slice_dataset.py --force` (étape 4 seule) pour re-découper avec le
-#      nouveau nombre de classes - inutile de retoucher aux étapes 2/3, elles
-#      travaillent en référentiel brut raw_classes, pas en super-classes.
-# ============================================================================
+  0: Bouteille
+  1: Flipflops
+  2: Cagette
+  3: Bouee
+  4: Cordage_Filet
+  5: Bouchon
+  6: Bidon
+  7: Debris_Divers
 
 # ============================================================================
 # RÉFÉRENTIEL UNIQUE DE CLASSES — source de vérité pour tout le projet.
 #
-# 
-# raw_classes : taxonomie brute CVAT à 20 classes (celle utilisée par les
-#   lots SL 11-16 / SL 17-25 / SL 6-10_26-27 — voir leur data.yaml local).
-# excluded_raw_classes : IDs bruts toujours ignorés, quel que soit le mode
-#   (remap_classes=True ou False).
-# raw_to_target : table de passage raw_classes -> names (les 4 super-classes
-#   ci-dessus), utilisée uniquement quand remap_classes=True.
+# Modèle par NOM (révisé le 19/08/2026, voir historique dans class_config.py).
+# Avant, un référentiel numérique fixe (raw_classes, 0-20) + une table de
+# traduction id->id par lot (batch_class_overrides) - abandonné parce qu'un
+# lot qui déclare simplement MOINS de classes qu'un autre (ex: SL, qui n'a
+# jamais eu la classe "à déterminer" apparue avec A LEG1_1/A LEG3_1) faisait
+# échouer une comparaison d'égalité stricte, alors qu'il n'y avait aucun
+# problème réel.
+#
+# Fonctionnement actuel : chaque lot garde son PROPRE data.yaml local tel
+# quel (peu importe combien de classes il déclare, dans quel ordre, avec
+# quels IDs). Pour traduire un label, on lit le nom de la classe via ce
+# data.yaml local (voir class_config.load_batch_local_names), on le normalise
+# (casse/accents/underscores - voir class_config.normalize_class_name), puis
+# on le cherche ci-dessous dans `class_taxonomy`.
+#
+# class_taxonomy : dict {nom de classe: ID de super-classe cible, ou "exclude"}.
+#   La clé est écrite avec l'orthographe "de référence" (peu importe laquelle
+#   tant qu'elle est dans class_taxonomy - les autres orthographes vues dans
+#   d'autres lots vont dans class_aliases ci-dessous). La normalisation gère
+#   déjà casse/accents/underscores automatiquement : PAS besoin de lister
+#   "Bouées" ET "bouees" séparément ici, une seule des deux suffit.
+# class_aliases : dict {autre orthographe: nom de référence déjà dans
+#   class_taxonomy} - UNIQUEMENT pour les vraies divergences que la
+#   normalisation ne résout pas (fautes de frappe, singulier/pluriel - ex:
+#   "flipflops"/"fliflops" chez SB vs SL, une lettre différente).
+#
+# ONBOARDING D'UNE NOUVELLE CLASSE (ex: un futur lot exporte un nom encore
+# jamais vu) : il suffit d'ajouter une entrée à class_taxonomy (ou, si le nom
+# est juste une variante d'orthographe d'une classe déjà connue, à
+# class_aliases). AUCUN CODE À TOUCHER. Et si un nom réellement utilisé dans
+# un label n'apparaît (même après normalisation/alias) dans aucune entrée,
+# ce n'est jamais silencieusement ignoré : raw_dataset_checker.py (étape 0)
+# bloque le pipeline en disant lequel, et class_config.py émet le même genre
+# d'avertissement à tout endroit qui charge ce fichier.
 # ============================================================================
 
-raw_classes:
-  0: bouteille PET
-  1: Cordage
-  2: Bouées
-  3: Inconnu
-  4: Fragments plastique rigide
-  5: Bouées pieuvre
-  6: Petit bidon
-  7: Plastique souple (sac)
-  8: Mousse expansée
-  9: Sceau
-  10: Polystyrene
-  11: fliflops
-  12: casques
-  13: bouchons
-  14: cagette
-  15: Bouteille Plastique rigide
-  16: Morceaux de bois
-  17: Verre
-  18: Tissu
-  19: flotteurs
-  20: A determiner
+class_taxonomy:
+  # -> 0: Bouteille (forme col + corps très reconnaissable)
+  "bouteille PET": 0
+  "Bouteille Plastique rigide": 0
 
-excluded_raw_classes: [3, 16, 17, 20]  # Inconnu, Bois, Verre, A determiner — jamais des déchets plastiques valides
+  # -> 1: Flipflops (mousse EVA, silhouette de tong très reconnaissable)
+  "fliflops": 1             # voir class_aliases pour "flipflops" (lot SB)
 
-raw_to_target:
-  # -> 0: Mousse_Fragments_Souple (Films, sacs, mousses, textiles, flip-flops)
-  7: 0    # Plastique souple (sac)
-  8: 0    # Mousse expansée
-  10: 0   # Polystyrène
-  11: 0   # Fliflops (mousse EVA)
-  18: 0   # Tissu
+  # -> 2: Cagette (grille/caisse, forme récurrente malgré une taille variable)
+  "cagette": 2
 
-  # -> 1: Plastique_Rigide (Bouteilles, bidons, bouchons, fragments rigides, casques, cagettes)
-  0: 1    # Bouteille PET
-  2: 1    # Bouées
-  4: 1    # Fragments plastique rigide
-  5: 1    # Bouées pieuvre
-  6: 1    # Petit bidon
-  9: 1    # Seau
-  12: 1   # Casques
-  13: 1   # Bouchons
-  14: 1   # Cagette
-  15: 1   # Bouteille Plastique rigide
-  19: 1   # Flotteurs
+  # -> 3: Bouee (bouees + flotteurs regroupés : forme individuellement très
+  # cohérente - cv_ratio_lxh 0.10 et 0.18 - mais trop peu d'exemples chacun
+  # séparément pour tenir seuls, voir l'audit du 21/08/2026 ci-dessus)
+  "Bouées": 3
+  "Bouées pieuvre": 3       # 0 instance réelle à ce jour, placée par précaution
+  "flotteurs": 3
 
-  # -> 2: Cordage_Filet (Fils, bout, filet de pêche)
-  1: 2    # Cordage
+  # -> 4: Cordage_Filet (fils, bout, filet de pêche)
+  "Cordage": 4
 
-  # (Il n'y a plus de classe cible 3 : voir le bloc "NonPlastique RETIRÉE
-  # TEMPORAIREMENT" juste au-dessus de `names`.)
+  # -> 5: Bouchon (petit objet à forme très constante - cv_ratio_lxh=0.158,
+  # le plus bas du dataset - et volume correct : 124 instances)
+  "bouchons": 5
 
-# ============================================================================
-# SURCHARGES DE TAXONOMIE PAR LOT
-#
-# Découvert lors de l'audit pré-slicing (raw_dataset_checker.py) : les lots
-# SB 1 à SB 5 (Saint-Brandon) ont été exportés depuis CVAT avec un schéma à
-# 9 classes totalement différent de "raw_classes" ci-dessus (ex: la classe
-# brute "8" veut dire "Mousse expansée" dans raw_classes, mais "inconnu" dans
-# le schéma SB). Sans traduction, un run de slicing sur ces lots contaminait
-# silencieusement le dataset (de l'"inconnu" se retrouvait étiqueté comme de
-# la vraie "Mousse expansée", et des "casques" valides étaient jetés à tort
-# comme "Inconnu").
-#
-# Chaque entrée ci-dessous traduit les IDs bruts d'un lot vers raw_classes
-# AVANT que excluded_raw_classes / raw_to_target ne s'appliquent. Les
-# fichiers .txt sources ne sont JAMAIS modifiés : la traduction se fait en
-# mémoire, au moment du slicing (voir PlasticImageSlicer._load_yolo_labels).
-#
-# Clé = nom du sous-dossier de premier niveau sous annotated_dataset.
-# Un lot absent de cette table est supposé déjà conforme à raw_classes
-# (c'est le cas de tous les lots SL aujourd'hui).
-# ============================================================================
-batch_class_overrides:
-  "SB 1": &sb_1_to_5_scheme
-    0: 14  # cagette                      -> cagette (14)
-    1: 11  # flipflops                    -> fliflops (11)
-    2: 13  # bouchons                     -> bouchons (13)
-    3: 12  # casques                      -> casques (12)
-    4: 0   # bouteilles_pet               -> bouteille PET (0)
-    5: 15  # bouteilles_plastique_rigide  -> Bouteille Plastique rigide (15)
-    6: 1   # cordage                      -> Cordage (1)
-    7: 2   # bouees                       -> Bouées (2)
-    8: 3   # inconnu                      -> Inconnu (3)
-  "SB 2": *sb_1_to_5_scheme
-  "SB 3": *sb_1_to_5_scheme
-  "SB 4": *sb_1_to_5_scheme
-  "SB 5": *sb_1_to_5_scheme
+  # -> 6: Bidon (Petit bidon - forme assez cohérente, cv_ratio_lxh=0.255,
+  # mais volume plus modeste : 61 instances - à surveiller si le rappel de
+  # cette classe reste faible après entraînement, faute de données)
+  "Petit bidon": 6
+
+  # -> 7: Debris_Divers (fourre-tout : forme non récurrente/pas assez
+  # d'exemples pour être apprise séparément - fragments, mousses, sacs,
+  # textiles, polystyrène, et les classes quasi-fantômes Sceau/casques)
+  "Plastique souple (sac)": 7
+  "Mousse expansée": 7
+  "Polystyrene": 7
+  "Fragments plastique rigide": 7
+  "Tissu": 7
+  "Sceau": 7                # 5 instances réelles seulement
+  "casques": 7               # 0 instance réelle à ce jour, placée par précaution
+
+  # -> exclue (jamais des déchets plastiques valides, ou classe pas encore assumée)
+  "Inconnu": exclude
+  "Morceaux de bois": exclude
+  "Verre": exclude
+  "à déterminer": exclude  # apparue avec les lots A LEG1_1 / A LEG3_1 (2026-08-19)
+
+# Vraies divergences d'orthographe entre lots (pas juste casse/accents/underscores,
+# déjà gérés par la normalisation automatique - voir class_config.normalize_class_name).
+# Découvert en comparant les data.yaml locaux de SB 1-5 à ceux de SL/A LEG :
+class_aliases:
+  "flipflops": "fliflops"                                    # SB - faute de frappe vs SL ("fliflops")
+  "bouteilles_pet": "bouteille PET"                           # SB - pluriel vs SL (singulier)
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide" # SB - pluriel vs SL (singulier)
+  # (les autres noms SB - cagette, bouchons, casques, cordage, bouees, inconnu -
+  # correspondent déjà à une entrée de class_taxonomy après normalisation seule,
+  # aucun alias n'est nécessaire pour eux.)
