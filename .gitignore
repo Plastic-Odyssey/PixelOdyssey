@@ -15,7 +15,6 @@ __pycache__/
 # ==========================================
 # Exclure le dataset d'images et labels
 datasets/
-data/
 
 # Exclure les poids des modèles lourds (.pt, .onnx, etc.)
 models/
