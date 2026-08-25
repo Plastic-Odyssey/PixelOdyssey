@@ -1,0 +1,27 @@
+# PixelOdyssey - dépendances Python du pipeline.
+#
+# Créé le 25/08/2026, après avoir découvert (via l'échec de bootstrap_annotate.py
+# sur la machine de l'utilisatrice - "ModuleNotFoundError: No module named
+# 'rasterio'") qu'aucune liste de dépendances n'existait encore : chaque paquet
+# avait été installé au fil de l'eau pendant le développement, sans jamais être
+# tracé nulle part - un simple `pip install -r requirements.txt` sur une machine
+# neuve (ou après une réinstallation de l'environnement conda `plastic_env`) ne
+# suffisait donc pas à retrouver un état fonctionnel. Liste reconstituée en
+# scannant tous les `import`/`from ... import` de src/ et config/.
+#
+# Installation :
+#   pip install -r requirements.txt
+#
+# rasterio embarque GDAL (dépendance native, pas juste Python) - le wheel PyPI
+# le fournit précompilé pour Windows/Linux/macOS sur les versions Python
+# courantes, donc `pip install` seul suffit normalement. Si l'installation
+# échoue (rare, mais peut arriver sur une config Python/OS moins courante),
+# passer par conda à la place : `conda install -c conda-forge rasterio`.
+
+ultralytics
+opencv-python
+numpy
+shapely
+PyYAML
+rasterio
+Pillow

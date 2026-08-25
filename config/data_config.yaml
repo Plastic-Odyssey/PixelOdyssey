@@ -141,6 +141,27 @@ class_taxonomy:
   "Verre": exclude
   "à déterminer": exclude  # apparue avec les lots A LEG1_1 / A LEG3_1 (2026-08-19)
 
+  # Auto-mapping des 8 super-classes VERS ELLES-MÊMES (25/08/2026) : nécessaire
+  # pour src/review/bootstrap_annotate.py (validation d'un nouveau lot "cold
+  # start" à partir des prédictions du modèle - voir sa docstring). Ce lot
+  # n'a, par construction, AUCUNE taxonomie fine existante (contrairement à
+  # SB/SL/A LEG, ~20 sous-classes chacun) - son propre data.yaml local
+  # déclare donc directement les 8 super-classes comme classes locales,
+  # plutôt que d'inventer un niveau de sous-classe qui n'existerait que pour
+  # ce lot. Ces entrées permettent à ce nom de se résoudre vers lui-même
+  # (raw_dataset_checker.py bloquerait sinon ce lot au prochain passage,
+  # "Bouteille" par exemple n'apparaissant sinon dans aucune entrée de
+  # class_taxonomy - seules les sous-classes fines comme "bouteille PET" y
+  # sont). Sans effet sur les autres lots.
+  "Bouteille": 0
+  "Flipflops": 1
+  "Cagette": 2
+  "Bouee": 3
+  "Cordage_Filet": 4
+  "Bouchon": 5
+  "Bidon": 6
+  "Debris_Divers": 7
+
 # Vraies divergences d'orthographe entre lots (pas juste casse/accents/underscores,
 # déjà gérés par la normalisation automatique - voir class_config.normalize_class_name).
 # Découvert en comparant les data.yaml locaux de SB 1-5 à ceux de SL/A LEG :
