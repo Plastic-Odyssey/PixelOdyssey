@@ -41,7 +41,9 @@ from pathlib import Path
 from typing import Dict
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.pipeline_utils import already_present, ensure_cache_is_safe
+from src.data.augment_dataset import MANIFEST_FILENAME as AUGMENT_MANIFEST_FILENAME
+from src.data.pipeline_utils import already_present, ensure_cache_is_safe, read_upstream_fingerprint
+from src.data.raw_dataset import VALID_IMG_EXTS  # source partagée, voir raw_dataset.py
 from src.data.slicer import LOGIC_VERSION, PlasticImageSlicer
 
 BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
@@ -49,12 +51,11 @@ AUGMENTED_DIR = os.path.join(BASE_DIR, "3_augmented_dataset")
 SLICED_DIR = os.path.join(BASE_DIR, "4_sliced_dataset")
 
 SPLITS = ["train", "val", "test"]
-VALID_IMG_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 
 MANIFEST_FILENAME = ".slicing_manifest.json"
 
 
-def _slicing_params(slicer: PlasticImageSlicer) -> Dict:
+def _slicing_params(slicer: PlasticImageSlicer, augmented_dir: Path) -> Dict:
     """Sérialise tous les paramètres qui influencent la sortie du slicer.
 
     Le slicer n'a plus aucune notion de classes (traduction faite une seule
@@ -65,6 +66,14 @@ def _slicing_params(slicer: PlasticImageSlicer) -> Dict:
     rétention des tuiles de fond, v2) doit lui aussi invalider le cache -
     sinon deux logiques différentes se mélangeraient silencieusement dans le
     même dossier de sortie.
+
+    "upstream_augment_fingerprint" (24/08/2026) : propage le fingerprint de
+    l'étape amont (augmentation, elle-même dépendante du split) - voir
+    read_upstream_fingerprint() dans pipeline_utils.py. Sans ça, un changement
+    de logique de split (ex: v2 -> v3) qui ne change AUCUN paramètre local du
+    slicer ne serait jamais détecté ici, et --force sur data_pipeline.py
+    rewiperait le split sans jamais rewiper le slicing correspondant - même
+    risque de fuite train/val/test qu'entre split et augmentation.
     """
     return {
         "slicer_logic_version": LOGIC_VERSION,
@@ -72,6 +81,8 @@ def _slicing_params(slicer: PlasticImageSlicer) -> Dict:
         "overlap": slicer.overlap,
         "min_area_ratio": slicer.min_area_ratio,
         "discard_truncated": slicer.discard_truncated,
+        "max_black_fraction": slicer.max_black_fraction,
+        "upstream_augment_fingerprint": read_upstream_fingerprint(augmented_dir / AUGMENT_MANIFEST_FILENAME),
     }
 
 
@@ -81,17 +92,20 @@ def run_slice(force: bool = False, augmented_dir: str = AUGMENTED_DIR, sliced_di
     # SEULE FOIS, en amont, à l'étape 2 (split_dataset.py, voir class_config.py) : les
     # fichiers lus ici sont déjà dans le référentiel final. Le slicer n'a donc plus de
     # paramètre lié aux classes (voir sa docstring, révisée le 19/08/2026).
-    slicer = PlasticImageSlicer(tile_size=640, overlap=256, discard_truncated=False)
+    # max_black_fraction=0.5 : écarte une tuile de fond (sans objet annoté) dont plus de
+    # la moitié des pixels sont ~noirs - triangles de bordure de rotation d'orthomosaïque
+    # découpée à la main, pas de vrais exemples de fond de scène (voir slicer.py, 22/08/2026).
+    slicer = PlasticImageSlicer(tile_size=640, overlap=256, discard_truncated=False, max_black_fraction=0.5)
+
+    augmented_dir_p = Path(augmented_dir)
 
     ensure_cache_is_safe(
         sliced_dir,
-        _slicing_params(slicer),
+        _slicing_params(slicer, augmented_dir_p),
         force=force,
         wipe_subdirs=["images", "labels"],
         manifest_filename=MANIFEST_FILENAME,
     )
-
-    augmented_dir_p = Path(augmented_dir)
     processed_count = 0
     skipped_count = 0
 

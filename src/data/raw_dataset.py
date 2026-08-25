@@ -3,10 +3,6 @@
 """
 PixelOdyssey - Découverte des images parentes dans le dataset brut annoté.
 
-Extrait de data_pipeline.py (qui faisait auparavant split + slicing en un seul
-script) pour que cette logique soit partagée par l'étape 2 (split_dataset.py)
-et par tout outil qui a besoin de parcourir `1_annotated_dataset` (ex: le
-checker pré-slicing).
 """
 
 from pathlib import Path

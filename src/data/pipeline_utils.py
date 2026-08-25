@@ -14,13 +14,44 @@ différentes des données dans le même dossier.
 import hashlib
 import json
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 MANIFEST_FILENAME = ".pipeline_manifest.json"
 
 
 def fingerprint(params: Dict) -> str:
     return hashlib.sha256(json.dumps(params, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def read_upstream_fingerprint(manifest_path: Union[str, Path]) -> Optional[str]:
+    """Lit le fingerprint enregistré par une étape AMONT, pour l'inclure dans les
+    params (donc dans le fingerprint) de l'étape courante.
+
+    But (ajouté le 24/08/2026, suite à un bug concret) : SANS ceci, chaque étape
+    incrémentale n'invalide son propre cache que si SES PROPRES paramètres
+    changent - elle n'a aucune idée que l'étape amont a produit un contenu
+    différent (ex: split_dataset.py passe de la logique v2 à v3, ce qui change
+    QUELS parents tombent dans train/val/test, sans qu'aucun paramètre de
+    augment_dataset.py ou slice_dataset.py n'ait lui-même changé). Résultat sans
+    ce garde-fou : `--force` sur data_pipeline.py ne rewipe QUE l'étape dont le
+    fingerprint local a changé (ici : le split) ; les étapes suivantes gardent
+    leur ancien contenu et se contentent d'AJOUTER les fichiers manquants dans
+    leur nouvel emplacement - un parent réassigné de train à val se retrouve
+    alors présent dans les DEUX à la fois en aval (fuite train/val silencieuse).
+    En incluant le fingerprint de l'étape amont dans les params de l'étape
+    courante, tout changement amont (même sans changement de paramètre local)
+    fait automatiquement mismatcher le fingerprint courant -> ensure_cache_is_safe
+    lève l'erreur/wipe comme il faut, à CHAQUE étape en aval, en cascade.
+
+    Retourne None si le manifeste amont n'existe pas encore (ex: tout premier
+    run, étape amont pas encore exécutée) - une valeur absente est un état valide
+    à fingerprinter comme un autre, pas une erreur.
+    """
+    manifest_path = Path(manifest_path)
+    if not manifest_path.exists():
+        return None
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        return json.load(f).get("fingerprint")
 
 
 def diff_params(old_params: Dict, new_params: Dict) -> List[str]:

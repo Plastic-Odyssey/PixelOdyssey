@@ -58,8 +58,13 @@ from src.data.class_config import (
     load_class_config,
     resolve_class_name,
 )
-
-VALID_IMG_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+# Importé depuis raw_dataset.py (source partagée), pas redéfini ici - dette
+# repérée le 24/08/2026 lors de la relecture de code guidée (deux copies
+# identiques qui pouvaient diverger silencieusement), corrigée le même jour
+# en vérifiant l'état du code avant un nouvel entraînement - et cette
+# vérification a trouvé une VRAIE divergence ailleurs (dataset_sanity_check.py,
+# voir sa propre correction), preuve que ce risque n'était pas que théorique.
+from src.data.raw_dataset import VALID_IMG_EXTS
 
 
 class RawDatasetValidator:

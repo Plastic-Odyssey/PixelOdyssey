@@ -48,7 +48,8 @@ from pathlib import Path
 from typing import Dict
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.pipeline_utils import ensure_cache_is_safe
+from src.data.pipeline_utils import ensure_cache_is_safe, read_upstream_fingerprint
+from src.data.split_dataset import MANIFEST_FILENAME as SPLIT_MANIFEST_FILENAME
 
 BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
 SPLIT_DIR = os.path.join(BASE_DIR, "2_split_dataset")
@@ -63,8 +64,16 @@ MANIFEST_FILENAME = ".augment_manifest.json"
 AUGMENTATION_RULES_VERSION = 0
 
 
-def _augment_params() -> Dict:
-    return {"augmentation_rules_version": AUGMENTATION_RULES_VERSION}
+def _augment_params(split_dir: Path) -> Dict:
+    # "upstream_split_fingerprint" (24/08/2026) : propage le fingerprint de
+    # l'étape amont (split) dans le nôtre - voir la docstring de
+    # read_upstream_fingerprint() dans pipeline_utils.py pour le bug concret que
+    # ça évite (fuite train/val silencieuse si le split change de logique SANS
+    # que cette étape ait elle-même changé de paramètre).
+    return {
+        "augmentation_rules_version": AUGMENTATION_RULES_VERSION,
+        "upstream_split_fingerprint": read_upstream_fingerprint(split_dir / SPLIT_MANIFEST_FILENAME),
+    }
 
 
 def _copy_split_dir(src_split_dir: Path, dst_split_dir: Path) -> int:
@@ -103,15 +112,15 @@ def _augment_train_split(split_dir: Path, augmented_dir: Path) -> None:
 
 
 def run_augment(force: bool = False, split_dir: str = SPLIT_DIR, augmented_dir: str = AUGMENTED_DIR):
+    split_dir_p, augmented_dir_p = Path(split_dir), Path(augmented_dir)
+
     ensure_cache_is_safe(
         augmented_dir,
-        _augment_params(),
+        _augment_params(split_dir_p),
         force=force,
         wipe_subdirs=["images", "labels"],
         manifest_filename=MANIFEST_FILENAME,
     )
-
-    split_dir_p, augmented_dir_p = Path(split_dir), Path(augmented_dir)
 
     print("--- 🌱 AUGMENTATION (étape 3) ---")
     _augment_train_split(split_dir_p, augmented_dir_p)

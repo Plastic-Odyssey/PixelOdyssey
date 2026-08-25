@@ -21,8 +21,7 @@ peut ensuite augmenter librement la portion train sans jamais risquer de
 faire fuiter quoi que ce soit vers val/test.
 
 Ce que fait cette étape, en plus de router chaque image parente vers le bon
-split - LA TRADUCTION DE CLASSES COMPLÈTE, en une seule passe (révisé le
-19/08/2026, modèle par nom - voir class_config.py) :
+split - LA TRADUCTION DE CLASSES COMPLÈTE, en une seule passe (modèle par nom - voir class_config.py) :
   1. Lit le data.yaml LOCAL du lot d'origine de l'image (local_id -> nom).
   2. Normalise ce nom et le cherche dans `class_taxonomy` (config/data_config.yaml).
   3. Écrit directement l'ID de SUPER-CLASSE CIBLE final (celui de `names`), ou
@@ -30,17 +29,15 @@ split - LA TRADUCTION DE CLASSES COMPLÈTE, en une seule passe (révisé le
 À partir de 2_split_dataset, les labels sont donc déjà dans leur espace de
 classes FINAL - les étapes suivantes (augmentation, slicing) n'ont plus
 aucune notion de classe à gérer, seulement de la géométrie/des fichiers.
-
-Ce que cette étape NE fait PAS : elle ne découpe pas les images en tuiles
-(étape 4) et n'altère pas la géométrie des polygones - seules les lignes de
-label sont traduites/filtrées, les coordonnées ne sont pas touchées.
 """
 
 import argparse
+import json
 import os
 import random
 import shutil
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
@@ -68,6 +65,17 @@ TEST_RATIO = 0.10
 SEED = 42
 
 MANIFEST_FILENAME = ".split_manifest.json"
+
+# Manifeste parent_id -> {batch, split, chemins bruts} écrit à chaque run de
+# run_split() (voir la fin de la fonction). Sert de source de vérité fiable
+# pour tout outil en aval qui a besoin de retrouver l'image/le label BRUTS
+# d'origine d'un parent_id présent dans 2_split_dataset (ex: l'outil de
+# relecture assistée par modèle, src/review/) - reconstruire ce chemin en
+# "dérivant" le parent_id (remplacer les espaces/séparateurs par des
+# underscores) est ambigu dès qu'un nom de fichier contient déjà un
+# underscore, donc pas fiable pour écrire quoi que ce soit en retour dans
+# 1_annotated_dataset.
+PARENT_MANIFEST_FILENAME = ".parent_manifest.json"
 
 
 def _translate_and_filter_label(
@@ -127,9 +135,24 @@ def _translate_and_filter_label(
     return out_lines
 
 
+
+# Incrémenter quand la LOGIQUE de split elle-même change (ex: passage d'un
+# shuffle global à une stratification par lot, le 21/08/2026 - v2 ; passage de
+# int() [toujours vers le bas, test hérite du reliquat] à round() pour val/test
+# avec reliquat absorbé par train, le 22/08/2026 - v3, voir commentaire dans la
+# boucle plus bas) de façon à produire une répartition différente pour les
+# MÊMES seed/ratios/taxonomie. Sans ce marqueur, _split_params() aurait
+# fingerprinté IDENTIQUEMENT avant et après un tel changement (aucun des
+# paramètres ci-dessous n'a changé de valeur), et ensure_cache_is_safe() aurait
+# silencieusement réutilisé un 2_split_dataset généré avec l'ANCIEN algorithme
+# sans jamais le signaler.
+SPLIT_LOGIC_VERSION = 3
+
+
 def _split_params(class_taxonomy, target_names: Dict[int, str]) -> Dict:
     """Paramètres qui influencent la sortie de cette étape (pour le garde-fou de cache)."""
     return {
+        "split_logic_version": SPLIT_LOGIC_VERSION,
         "seed": SEED,
         "train_ratio": TRAIN_RATIO,
         "val_ratio": VAL_RATIO,
@@ -157,38 +180,102 @@ def run_split(force: bool = False, raw_dir: str = RAW_DIR, split_dir: str = SPLI
 
     unique_parents = list({p["parent_id"]: p for p in all_parents}.values())
 
+    # Stratification PAR LOT (21/08/2026) - remplace l'ancien shuffle global.
+    # Pourquoi : un shuffle global sur les 540 images parentes traite chaque
+    # image comme interchangeable, alors que certains lots (ex: les A LEG,
+    # ~8 images chacun) sont la SEULE source de certaines classes réelles
+    # (ex: Sceau). Avec un shuffle global, le pur hasard peut renvoyer un
+    # petit lot entier vers train et laisser val/test sans aucun exemple de
+    # ses classes exclusives - ou l'inverse. Découper 70/20/10 SÉPARÉMENT à
+    # l'intérieur de chaque lot, puis fusionner les résultats, garantit que
+    # CHAQUE lot (et donc ses classes propres) est représenté dans les trois
+    # splits dans les proportions voulues, peu importe la chance du tirage.
+    parents_by_batch: Dict[str, List[Dict]] = defaultdict(list)
+    for item in unique_parents:
+        parents_by_batch[item["batch"]].append(item)
+
     random.seed(SEED)
-    random.shuffle(unique_parents)
+    split_map: Dict[str, str] = {}
+    counts = {"train": 0, "val": 0, "test": 0}
+    small_batch_warnings: List[str] = []
+    for batch_name in sorted(parents_by_batch):
+        batch_items = parents_by_batch[batch_name]
+        random.shuffle(batch_items)
+        n_b = len(batch_items)
+        # Arrondi (22/08/2026, v3) : val et test sont arrondis chacun au plus proche
+        # de leur part théorique (round(), pas int()) ; train absorbe le reliquat.
+        # AVANT : train et val étaient tous les deux tronqués vers le BAS (int()),
+        # et test récupérait TOUT le reliquat des deux troncatures - un biais
+        # SYSTÉMATIQUE qui gonflait test au-delà de ses 10% nominaux, surtout sur
+        # les petits lots (ex: un lot de 4 images visant train=2.8/val=0.8/test=0.4
+        # donnait train=2/val=0/test=2, soit 5x la part théorique de test). Ce
+        # biais a été découvert en aval : sur le run du 22/08/2026, le split test
+        # avait MOINS d'images parentes que val (66 vs 102) mais PLUS de tuiles et
+        # d'instances après slicing (836/1375 vs 752/909), parce que les petits
+        # lots à résolution variable (A LEG, SL - qui produisent beaucoup de
+        # tuiles par image via la fenêtre glissante, contrairement aux imagettes
+        # SB) étaient surreprésentés dans test. Faire absorber le reliquat par
+        # TRAIN plutôt que TEST est le bon choix : train ne sert jamais à mesurer
+        # une performance, une distorsion d'arrondi y est donc sans conséquence,
+        # alors qu'elle biaisait directement l'évaluation quand elle tombait sur
+        # test.
+        n_val_b = round(n_b * VAL_RATIO)
+        n_test_b = round(n_b * TEST_RATIO)
+        n_train_b = n_b - n_val_b - n_test_b
+
+        for idx, item in enumerate(batch_items):
+            if idx < n_train_b:
+                s = "train"
+            elif idx < n_train_b + n_val_b:
+                s = "val"
+            else:
+                s = "test"
+            split_map[item["parent_id"]] = s
+            counts[s] += 1
+
+        # Un lot trop petit pour peupler ses trois portions proportionnellement
+        # (ex: un lot de 8 images -> 0 en val et/ou test avec ces ratios) n'est
+        # pas une erreur - juste un fait à ne pas laisser passer en silence :
+        # ses classes exclusives risquent alors de ne jamais apparaître dans
+        # un des splits malgré la stratification.
+        if n_b > 0 and (n_train_b == 0 or n_val_b == 0 or n_test_b == 0):
+            small_batch_warnings.append(
+                f"  ⚠️  [{batch_name}] lot de {n_b} image(s) trop petit pour peupler les 3 "
+                f"splits proportionnellement (train={n_train_b}, val={n_val_b}, test={n_test_b})."
+            )
 
     n_total = len(unique_parents)
-    n_train = int(n_total * TRAIN_RATIO)
-    n_val = int(n_total * VAL_RATIO)
-
-    split_map = {}
-    for idx, item in enumerate(unique_parents):
-        if idx < n_train:
-            split_map[item["parent_id"]] = "train"
-        elif idx < n_train + n_val:
-            split_map[item["parent_id"]] = "val"
-        else:
-            split_map[item["parent_id"]] = "test"
-
-    print(f"--- 📦 SPLIT ÉTANCHE ({n_total} images parentes) ---")
-    print(f"  • Train ({int(TRAIN_RATIO*100)}%): {n_train}")
-    print(f"  • Val   ({int(VAL_RATIO*100)}%): {n_val}")
-    print(f"  • Test  ({int(TEST_RATIO*100)}%): {n_total - n_train - n_val}\n")
+    print(f"--- 📦 SPLIT ÉTANCHE, STRATIFIÉ PAR LOT ({n_total} images parentes, {len(parents_by_batch)} lots) ---")
+    print(f"  • Train: {counts['train']}")
+    print(f"  • Val  : {counts['val']}")
+    print(f"  • Test : {counts['test']}")
+    if small_batch_warnings:
+        print()
+        for w in small_batch_warnings:
+            print(w)
+    print()
 
     processed_count = 0
     skipped_count = 0
     # Cache par lot : plusieurs images parentes partagent le même data.yaml local,
     # pas la peine de le relire à chaque fois.
     local_names_by_batch: Dict[str, Dict[int, str]] = {}
+    # Reconstruit à CHAQUE run (pas seulement pour les parents nouvellement copiés) -
+    # voir PARENT_MANIFEST_FILENAME ci-dessus.
+    parent_manifest: Dict[str, Dict] = {}
 
     for item in unique_parents:
         parent_id = item["parent_id"]
         split = split_map[parent_id]
         img_src = Path(item["img_path"])
         batch_name = item["batch"]
+
+        parent_manifest[parent_id] = {
+            "batch": batch_name,
+            "split": split,
+            "raw_img_path": str(img_src),
+            "raw_label_path": item["label_path"],
+        }
 
         img_dst_dir = Path(split_dir) / "images" / split
         lab_dst_dir = Path(split_dir) / "labels" / split
@@ -223,9 +310,13 @@ def run_split(force: bool = False, raw_dir: str = RAW_DIR, split_dir: str = SPLI
 
         processed_count += 1
 
+    with open(Path(split_dir) / PARENT_MANIFEST_FILENAME, "w", encoding="utf-8") as f:
+        json.dump(parent_manifest, f, indent=2, ensure_ascii=False)
+
     print(f"[SUCCÈS] Split terminé.")
     print(f"  • Nouvelles images copiées : {processed_count}")
     print(f"  • Images ignorées (déjà là) : {skipped_count}")
+    print(f"  • Manifeste parent -> brut : {PARENT_MANIFEST_FILENAME} ({len(parent_manifest)} entrées)")
 
 
 if __name__ == "__main__":

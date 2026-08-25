@@ -3,17 +3,6 @@
 """
 PixelOdyssey - Chargement du référentiel unique de classes.
 
-Historique (2026-08-19) : ce référentiel était auparavant une énumération
-numérique fixe (`raw_classes`, 20 puis 21 classes) + une table de traduction
-par lot pour les schémas divergents (`batch_class_overrides`, ex: SB 1-5).
-Problème découvert en pratique : un lot qui déclare simplement MOINS de
-classes que d'autres (ex: SL, qui n'a jamais eu la classe "à déterminer"
-apparue avec les lots A LEG1_1/A LEG3_1) faisait échouer une comparaison
-d'égalité stricte entre son data.yaml local et le référentiel, alors qu'il
-n'y avait aucun problème réel (SL n'utilise juste jamais cette classe).
-
-Nouveau modèle, par NOM plutôt que par ID :
---------------------------------------------
 Chaque lot garde son propre `data.yaml` local tel quel (peu importe combien
 de classes il déclare, dans quel ordre, avec quels IDs - voir
 `load_batch_local_names`). Pour traduire un label, on lit le NOM de la classe
@@ -80,6 +69,32 @@ def resolve_class_name(name: str, taxonomy: ClassTaxonomy) -> Optional[Union[int
     pipeline plutôt que d'être ignoré en silence.
     """
     return taxonomy.get(normalize_class_name(name))
+
+
+def pick_placeholder_local_id(
+    local_names: Dict[int, str], taxonomy: ClassTaxonomy, target_id: int
+) -> Optional[int]:
+    """
+    Usage très spécifique : relecture des des annotations assistée par le modèle (src/review/).
+    
+    Choisit, PARMI LES CLASSES QUE CE LOT DÉCLARE LUI-MÊME (son propre
+    data.yaml local), la première (par ID croissant) qui se résout vers
+    `target_id`. Utilisé par l'outil de relecture assistée (src/review/) pour
+    injecter une nouvelle détection dans un `.txt` brut : le modèle ne prédit
+    qu'en espace SUPER-CLASSE (3 classes), jamais en espace fin (~20 classes
+    par lot) - il ne peut donc jamais dire QUELLE sous-classe précise il a
+    vue, seulement sa famille. On injecte donc un nom de sous-classe
+    "placeholder" - toujours une sous-classe RÉELLEMENT déclarée par CE lot
+    (pas une sous-classe empruntée à un autre lot qui n'existerait pas dans
+    son data.yaml) - à charge pour la relecture humaine dans CVAT de corriger
+    le sous-type exact. Retourne None si ce lot ne déclare AUCUNE sous-classe
+    qui pointe vers `target_id` (rare, mais possible) - à charge de l'appelant
+    de le signaler plutôt que d'injecter n'importe quoi.
+    """
+    for local_id in sorted(local_names):
+        if resolve_class_name(local_names[local_id], taxonomy) == target_id:
+            return local_id
+    return None
 
 
 def load_class_config(

@@ -15,6 +15,13 @@ Fonctionnalités principales :
    ci-dessous) - utile pour équilibrer l'entraînement. Une tuile vide au sein d'une
    image par ailleurs non-vide reste sous-échantillonnée (1 sur 10).
 5. Support multi-résolution : Traitement unifié des orthomosaïques brutes ou tuiles 1024x1024.
+6. Filtre anti-bordure noire (max_black_fraction) : les JPG découpés à la main à partir
+   d'un orthomosaïque brut (mal orienté à la verticale) portent des triangles noirs sur
+   les côtés. Une tuile SANS OBJET ANNOTÉ dont la fraction de pixels ~noirs dépasse ce
+   seuil (0.5 par défaut) est écartée plutôt que gardée comme "exemple de fond" - sinon
+   ces bordures, qui ne sont pas de vrais fonds de scène, diluent la valeur des exemples
+   de fond réellement propres. Une tuile contenant un objet annoté n'est JAMAIS écartée
+   pour cette raison, quel que soit son contenu noir.
 
 Ce module NE CONNAÎT PLUS RIEN aux classes (retiré le 19/08/2026) : il lit et
 écrit les IDs de classe présents dans les fichiers .txt tels quels, sans les
@@ -33,16 +40,23 @@ import cv2
 import numpy as np
 from shapely.geometry import MultiPolygon, Polygon, box
 
+from src.data.image_io import load_image_bgr
+from src.data.tiling_geometry import iter_tile_windows
+
 # Incrémenter quand la LOGIQUE interne de tuilage change de façon à produire
 # une sortie différente pour les MÊMES paramètres de constructeur (ex: la
-# règle de sous-échantillonnage des tuiles vides ci-dessous, v2). Les
-# paramètres du constructeur (tile_size, overlap, ...) sont déjà inclus dans
-# le fingerprint du cache incrémental (voir slice_dataset.py) ; ce numéro de
-# version couvre les changements de comportement qui n'ont pas de paramètre
-# dédié - sans lui, un tel changement passerait inaperçu par le garde-fou de
-# cache et mélangerait silencieusement deux logiques différentes dans le même
-# dossier de sortie.
-LOGIC_VERSION = 2
+# règle de sous-échantillonnage des tuiles vides ci-dessous, v2 ; le correctif
+# des images plus petites que tile_size, v3 ; le chargement via
+# `image_io.load_image_bgr` au lieu de `cv2.imread` direct, v4 - une image
+# TIFF multi-bandes (RGB+alpha/NIR, cf. .tif accepté par 1_annotated_dataset)
+# pouvait auparavant être écrite en tuile à 4 canaux au lieu de 3, voir
+# image_io.py pour le détail du bug). Les paramètres du constructeur
+# (tile_size, overlap, ...) sont déjà inclus dans le fingerprint du cache
+# incrémental (voir slice_dataset.py) ; ce numéro de version couvre les
+# changements de comportement qui n'ont pas de paramètre dédié - sans lui, un
+# tel changement passerait inaperçu par le garde-fou de cache et mélangerait
+# silencieusement deux logiques différentes dans le même dossier de sortie.
+LOGIC_VERSION = 4
 
 
 class PlasticImageSlicer:
@@ -52,6 +66,7 @@ class PlasticImageSlicer:
         overlap: int = 256,
         min_area_ratio: float = 0.05,
         discard_truncated: bool = False,
+        max_black_fraction: float = 0.5,
     ) -> None:
         """
         Args:
@@ -60,12 +75,27 @@ class PlasticImageSlicer:
             min_area_ratio: Ratio de surface minimale conservé pour un polygone tronqué (ex: 0.05 = 5%).
             discard_truncated: Si True, supprime les objets coupés par le bord.
                                Si False, recadre le polygone sur la bordure de la tuile.
+            max_black_fraction: Seuil (0-1) de fraction de pixels ~noirs au-delà duquel une
+                               tuile SANS OBJET ANNOTÉ est écartée plutôt que gardée comme
+                               exemple de fond (voir point 6 de la docstring du module -
+                               bordures de rotation d'orthomosaïque). N'affecte jamais une
+                               tuile contenant un objet annoté, qui est toujours gardée.
         """
         self.tile_size = tile_size
         self.overlap = overlap
         self.stride = tile_size - overlap
         self.min_area_ratio = min_area_ratio
         self.discard_truncated = discard_truncated
+        self.max_black_fraction = max_black_fraction
+
+    def _black_fraction(self, tile_img: np.ndarray) -> float:
+        """Fraction de pixels ~noirs (BGR) dans une tuile - typiquement les triangles de
+        bordure issus d'une rotation d'orthomosaïque découpée à la main. Seuil <= 10 par
+        canal plutôt que 0 strict pour absorber le bruit de compression JPEG autour du noir."""
+        if tile_img.size == 0:
+            return 0.0
+        near_black = np.all(tile_img <= 10, axis=2)
+        return float(near_black.mean())
 
     def _load_yolo_labels(self, label_path: Union[str, Path], img_w: int, img_h: int) -> List[Dict]:
         """Lit un fichier YOLO-seg déjà dans l'espace de classes final (voir docstring
@@ -125,15 +155,30 @@ class PlasticImageSlicer:
             else self.discard_truncated
         )
 
-        img = cv2.imread(str(img_p))
+        img = load_image_bgr(img_p)
         if img is None:
             print(f"[ERREUR] Impossible de charger l'image : {img_p}")
             return 0
 
         img_h, img_w, _ = img.shape
 
-        # Cas d'une tuile déjà au format cible (ex: 640x640)
-        if img_h == self.tile_size and img_w == self.tile_size:
+        # Cas d'une image déjà PLUS PETITE OU ÉGALE à la tuile cible dans les deux
+        # dimensions (ex: une "imagette" déjà découpée par l'annotateur - lots SB,
+        # potentiellement pas exactement 640x640) : rien à faire glisser, l'image
+        # entière tient dans une seule tuile. Corrigé le 22/08/2026 (LOGIC_VERSION 3) -
+        # AVANT, seule l'égalité STRICTE (== tile_size dans les deux dimensions)
+        # déclenchait ce passage direct ; toute image plus petite (ex: 512x512)
+        # tombait dans la boucle de fenêtre glissante ci-dessous, qui suppose que
+        # l'image est AU MOINS aussi grande que tile_size. Sur une image plus
+        # petite, `iter_tile_windows` génère plusieurs fenêtres qui se ramènent
+        # TOUTES au même coin (0,0) une fois bridées aux limites de l'image - même
+        # nom de fichier de sortie écrit plusieurs fois de suite (silencieusement,
+        # sans erreur), et la tuile écrite fait la taille de l'image source, pas
+        # tile_size x tile_size. Ultralytics redimensionne (letterbox) chaque image
+        # à l'entraînement de toute façon, donc garder la taille native ici est
+        # inoffensif ; ce qui comptait était d'arrêter de fabriquer des doublons
+        # silencieux et un compte de tuiles faux.
+        if img_h <= self.tile_size and img_w <= self.tile_size:
             polygons = self._load_yolo_labels(label_p, img_w, img_h)
             tile_labels = []
             for poly in polygons:
@@ -143,6 +188,15 @@ class PlasticImageSlicer:
                     norm_coords.extend([max(0.0, min(1.0, x / img_w)), max(0.0, min(1.0, y / img_h))])
                 coords_str = " ".join([f"{c:.6f}" for c in norm_coords])
                 tile_labels.append(f"{poly['class_id']} {coords_str}\n")
+
+            # Filtre anti-bordure noire : cette image (déjà <= tile_size, ex: une
+            # "imagette" pré-découpée) constitue elle-même sa seule et unique tuile.
+            # Si elle n'a aucun objet annoté ET qu'elle est majoritairement noire, elle
+            # ne vaut pas un exemple de fond utile - écartée entièrement (0 tuile en
+            # sortie pour ce parent), plutôt que gardée comme dans les anciennes
+            # versions. Une tuile avec un objet annoté n'est jamais concernée.
+            if not tile_labels and self._black_fraction(img) > self.max_black_fraction:
+                return 0
 
             cv2.imwrite(str(out_img_d / f"{prefix}.png"), img)
             with open(out_lab_d / f"{prefix}.txt", "w", encoding="utf-8") as f:
@@ -158,73 +212,75 @@ class PlasticImageSlicer:
         # ce second cas).
         parent_is_all_background = not polygons
 
-        for y_offset in range(0, img_h, self.stride):
-            for x_offset in range(0, img_w, self.stride):
-                x_start = x_offset
-                y_start = y_offset
+        for x_start, y_start, x_end, y_end in iter_tile_windows(img_w, img_h, self.tile_size, self.stride):
+            tile_img = img[y_start:y_end, x_start:x_end]
+            tile_box = box(x_start, y_start, x_end, y_end)
+            tile_boundary = tile_box.boundary
+            tile_labels: List[str] = []
 
-                if x_start + self.tile_size > img_w:
-                    x_start = max(0, img_w - self.tile_size)
-                if y_start + self.tile_size > img_h:
-                    y_start = max(0, img_h - self.tile_size)
+            for poly in polygons:
+                geom = poly["geom"]
+                if not tile_box.intersects(geom):
+                    continue
 
-                x_end = x_start + self.tile_size
-                y_end = y_start + self.tile_size
-
-                tile_img = img[y_start:y_end, x_start:x_end]
-                tile_box = box(x_start, y_start, x_end, y_end)
-                tile_boundary = tile_box.boundary
-                tile_labels: List[str] = []
-
-                for poly in polygons:
-                    geom = poly["geom"]
-                    if not tile_box.intersects(geom):
+                if discard_truncated:
+                    if geom.intersects(tile_boundary):
+                        continue
+                    intersection = geom
+                else:
+                    intersection = tile_box.intersection(geom)
+                    if intersection.is_empty or intersection.area <= 0:
+                        continue
+                    if (intersection.area / poly["original_area"]) < self.min_area_ratio:
                         continue
 
-                    if discard_truncated:
-                        if geom.intersects(tile_boundary):
-                            continue
-                        intersection = geom
-                    else:
-                        intersection = tile_box.intersection(geom)
-                        if intersection.is_empty or intersection.area <= 0:
-                            continue
-                        if (intersection.area / poly["original_area"]) < self.min_area_ratio:
-                            continue
+                if isinstance(intersection, Polygon):
+                    parts = [intersection]
+                elif isinstance(intersection, MultiPolygon):
+                    parts = list(intersection.geoms)
+                else:
+                    continue
 
-                    if isinstance(intersection, Polygon):
-                        parts = [intersection]
-                    elif isinstance(intersection, MultiPolygon):
-                        parts = list(intersection.geoms)
-                    else:
+                for part in parts:
+                    if part.area <= 0:
                         continue
 
-                    for part in parts:
-                        if part.area <= 0:
-                            continue
+                    local_coords: List[float] = []
+                    for x_glob, y_glob in part.exterior.coords:
+                        x_loc = max(0.0, min(1.0, (x_glob - x_start) / self.tile_size))
+                        y_loc = max(0.0, min(1.0, (y_glob - y_start) / self.tile_size))
+                        local_coords.extend([x_loc, y_loc])
 
-                        local_coords: List[float] = []
-                        for x_glob, y_glob in part.exterior.coords:
-                            x_loc = max(0.0, min(1.0, (x_glob - x_start) / self.tile_size))
-                            y_loc = max(0.0, min(1.0, (y_glob - y_start) / self.tile_size))
-                            local_coords.extend([x_loc, y_loc])
+                    if len(local_coords) >= 6:
+                        coords_str = " ".join([f"{c:.6f}" for c in local_coords])
+                        tile_labels.append(f"{poly['class_id']} {coords_str}\n")
 
-                        if len(local_coords) >= 6:
-                            coords_str = " ".join([f"{c:.6f}" for c in local_coords])
-                            tile_labels.append(f"{poly['class_id']} {coords_str}\n")
+            # On garde une tuile si : elle contient un objet, OU l'image parente est
+            # entièrement background (auquel cas ON GARDE TOUT - ce sont précisément
+            # les images "sans déchets" utiles pour équilibrer l'entraînement, jeter
+            # 90% de leurs tuiles serait contre-productif), OU 1 tuile vide sur 10 sinon
+            # (juste pour garder quelques exemples de fond au sein d'une image qui
+            # contient par ailleurs des objets, sans exploser le nombre de tuiles vides).
+            #
+            # Filtre anti-bordure noire (ajouté le 22/08/2026) : une tuile SANS OBJET
+            # qui serait gardée par une des deux règles de fond ci-dessus (parent
+            # entièrement background, ou tirage 1/10) est en plus soumise au test de
+            # fraction noire - si elle dépasse le seuil, c'est très probablement un
+            # triangle de bordure de rotation d'orthomosaïque, pas un vrai exemple de
+            # fond de scène, et elle est écartée. Une tuile qui contient un objet
+            # annoté n'est JAMAIS concernée par ce filtre, quel que soit son contenu
+            # noir (tile_labels non-vide -> keep_as_background jamais évalué).
+            keep_as_background = False
+            if not tile_labels:
+                would_keep = parent_is_all_background or (tile_count % 10 == 0)
+                keep_as_background = would_keep and self._black_fraction(tile_img) <= self.max_black_fraction
 
-                # On garde une tuile si : elle contient un objet, OU l'image parente est
-                # entièrement background (auquel cas ON GARDE TOUT - ce sont précisément
-                # les images "sans déchets" utiles pour équilibrer l'entraînement, jeter
-                # 90% de leurs tuiles serait contre-productif), OU 1 tuile vide sur 10 sinon
-                # (juste pour garder quelques exemples de fond au sein d'une image qui
-                # contient par ailleurs des objets, sans exploser le nombre de tuiles vides).
-                if tile_labels or parent_is_all_background or (tile_count % 10 == 0):
-                    base_name = f"{prefix}_{x_start}_{y_start}"
-                    cv2.imwrite(str(out_img_d / f"{base_name}.png"), tile_img)
-                    with open(out_lab_d / f"{base_name}.txt", "w", encoding="utf-8") as f:
-                        f.writelines(tile_labels)
+            if tile_labels or keep_as_background:
+                base_name = f"{prefix}_{x_start}_{y_start}"
+                cv2.imwrite(str(out_img_d / f"{base_name}.png"), tile_img)
+                with open(out_lab_d / f"{base_name}.txt", "w", encoding="utf-8") as f:
+                    f.writelines(tile_labels)
 
-                    tile_count += 1
+                tile_count += 1
 
         return tile_count
