@@ -1,54 +1,74 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PixelOdyssey - Vérificateur du dataset BRUT (pré-slicing).
+PixelOdyssey - Vérificateur du dataset brut (pré-slicing).
 
-À lancer AVANT split_dataset.py (étape 2), directement
-sur `1_annotated_dataset` (avant tout découpage en tuiles train/val/test).
+À lancer avant split_dataset.py (étape 2), directement sur
+`1_annotated_dataset` (avant tout découpage en tuiles train/val/test).
 
 Contrairement à `PlasticDatasetChecker` (qui valide 2_split_dataset ou
-4_sliced_dataset APRÈS coup, structure images/{train,val,test} + labels/{train,val,test}),
-ce script valide la donnée source : un ensemble de lots/batches d'annotation
-(un sous-dossier par session terrain / export CVAT), qui n'ont pas encore de
-notion de split.
+4_sliced_dataset après coup, structure images/{train,val,test} +
+labels/{train,val,test}), ce script valide la donnée source : un ensemble de
+lots/batches d'annotation (un sous-dossier par session terrain / export
+CVAT), qui n'ont pas encore de notion de split.
 
-Modèle de classes (révisé le 19/08/2026 - voir class_config.py) : chaque lot
-garde son PROPRE data.yaml local (local_id -> nom), qui peut différer
-librement d'un lot à l'autre en nombre/ordre/IDs de classes - ce n'est JAMAIS
-en soi un problème (ex: SL n'a jamais eu la classe "à déterminer" apparue avec
-A LEG1_1/A LEG3_1, et ça n'a rien d'anormal). On NE compare donc plus les
-data.yaml des lots entre eux ni à un quelconque "référentiel brut" : on vérifie
-uniquement que chaque nom de classe RÉELLEMENT UTILISÉ dans un .txt se résout
-(après normalisation/alias) dans `class_taxonomy` (config/data_config.yaml).
+Modèle de classes : chaque lot garde son propre data.yaml local (local_id ->
+nom), qui peut différer librement d'un lot à l'autre en nombre/ordre/IDs de
+classes - ce n'est jamais en soi un problème. Les data.yaml des lots ne sont
+donc pas comparés entre eux ni à un "référentiel brut" : on vérifie
+uniquement que chaque nom de classe réellement utilisé dans un .txt se
+résout (après normalisation/alias) dans `class_taxonomy`
+(config/data_config.yaml).
 
 Vérifications :
-1. Chaque lot doit avoir son propre data.yaml local (sinon: erreur bloquante,
-   impossible de savoir ce que ses IDs de classe veulent dire).
+1. Chaque lot doit avoir son propre data.yaml local (sinon : erreur
+   bloquante, impossible de savoir ce que ses IDs de classe veulent dire).
 2. Un label .txt sans image correspondante est une erreur bloquante (fichier
-   orphelin, ne peut correspondre à rien de valide). Une IMAGE sans .txt n'en
-   est PAS une : c'est le format normal d'une photo de terrain confirmée sans
-   déchet ("background") - volontairement gardée dans le dataset pour
-   équilibrer l'entraînement (voir décision du 19/08/2026). Comptée et
-   affichée pour information, jamais bloquante.
+   orphelin). Une image sans .txt n'en est PAS une : c'est le format normal
+   d'une photo de terrain confirmée sans déchet ("background"),
+   volontairement gardée dans le dataset pour équilibrer l'entraînement -
+   comptée et affichée pour information, jamais bloquante.
 3. Chaque ID de classe utilisé dans un .txt doit exister dans le data.yaml
    local DE CE LOT (incohérence interne, erreur bloquante sinon), ET le NOM
    correspondant doit se résoudre (via normalisation + class_aliases) dans
-   `class_taxonomy` (config/data_config.yaml) - erreur bloquante sinon : c'est
-   exactement le cas d'une classe toute nouvelle (ex: "à déterminer") dont
-   personne n'a encore décidé le sort. Bloquer ici, plutôt que de la mapper
-   par erreur ou de la laisser tomber silencieusement, est ce qui permet à
-   class_taxonomy de rester une table flexible : ajouter une classe n'importe
-   où ne casse jamais rien en silence, l'oublier de classer se voit
+   `class_taxonomy` (config/data_config.yaml) - erreur bloquante sinon. Ça
+   permet à class_taxonomy de rester une table flexible : ajouter une classe
+   n'importe où ne casse jamais rien en silence, l'oublier de classer se voit
    immédiatement - et un lot qui déclare simplement moins de classes qu'un
    autre ne bloque jamais rien.
 4. Format de chaque ligne de label (nombre de coordonnées pair, ≥3 points,
    valeurs dans [0,1]).
+5. NON BLOQUANT - doublons probables d'annotation : deux masques de MÊME
+   classe cible (après résolution, pas juste même local_id - deux noms
+   locaux différents peuvent pointer vers la même super-classe) sur la MÊME
+   image parente, dont l'IoU dépasse `--duplicate-iou-threshold` (0.5 par
+   défaut). Ça arrive typiquement quand un même déchet a été dessiné deux
+   fois (retouche/relecture qui rajoute un contour sans supprimer l'ancien,
+   ou fusion de deux exports CVAT) - le contour diffère légèrement mais
+   couvre le même objet physique. Volontairement NON bloquant (contrairement
+   aux points 1-4) : contrairement à une classe non résolue, il n'y a pas de
+   correction automatique évidente - décider si c'est un vrai doublon ou
+   deux objets voisins dans un tas nécessite un oeil humain, donc juste
+   signalé pour relecture. Important AVANT le slicing : chaque doublon non
+   corrigé ici se retrouve démultiplié dans 4_sliced_dataset (une paire
+   dupliquée dans l'image parente devient une paire dupliquée dans CHAQUE
+   tuile qui recouvre cette zone).
+
+Entrée : dossier racine des lots d'annotation bruts (--raw-path) et le
+référentiel de classes du projet (--reference-yaml).
+Sortie : rapport sur stdout ; code de sortie 0 si le dataset brut est
+cohérent, 1 sinon (le point 5 ci-dessus n'affecte jamais ce code de sortie).
+
+Exemple :
+    python -m src.data.raw_dataset_checker --raw-path 1_annotated_dataset
 """
 
 import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Set
+
+from shapely.geometry import Polygon
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.data.class_config import (
@@ -58,19 +78,26 @@ from src.data.class_config import (
     load_class_config,
     resolve_class_name,
 )
-# Importé depuis raw_dataset.py (source partagée), pas redéfini ici - dette
-# repérée le 24/08/2026 lors de la relecture de code guidée (deux copies
-# identiques qui pouvaient diverger silencieusement), corrigée le même jour
-# en vérifiant l'état du code avant un nouvel entraînement - et cette
-# vérification a trouvé une VRAIE divergence ailleurs (dataset_sanity_check.py,
-# voir sa propre correction), preuve que ce risque n'était pas que théorique.
+# Importé depuis raw_dataset.py (source partagée), pas redéfini ici, pour
+# éviter que deux copies identiques divergent silencieusement.
 from src.data.raw_dataset import VALID_IMG_EXTS
+# Réutilisé tel quel (même calcul que pour comparer GT<->prédiction en revue,
+# voir tiled_inference.py/label_review.py) : l'IoU est invariant à l'échelle
+# tant que x et y sont mis à l'échelle uniformément, donc valide directement
+# sur des coordonnées normalisées [0,1] sans repasser en pixels.
+from src.review.matching import polygon_iou
 
 
 class RawDatasetValidator:
     """Valide l'intégrité de 1_annotated_dataset AVANT le split (étape 2)."""
 
-    def __init__(self, raw_path: str, reference_yaml: str, reference_key: str = "class_taxonomy"):
+    def __init__(
+        self,
+        raw_path: str,
+        reference_yaml: str,
+        reference_key: str = "class_taxonomy",
+        duplicate_iou_threshold: float = 0.5,
+    ):
         """
         Args:
             raw_path: dossier racine des lots d'annotation bruts (1_annotated_dataset).
@@ -80,17 +107,28 @@ class RawDatasetValidator:
                 de signature/CLI) - la taxonomie est toujours chargée via
                 `class_config.load_class_config`, qui lit à la fois `class_taxonomy`
                 et `class_aliases`.
+            duplicate_iou_threshold: seuil au-delà duquel deux masques de même classe
+                cible sur la même image sont signalés comme doublon probable (voir
+                point 5 de la docstring du module). 0.5 par défaut : assez haut pour
+                ne pas confondre deux objets voisins/qui se touchent dans un tas
+                (chevauchement partiel plausible) avec un même objet dessiné deux fois
+                (chevauchement quasi total attendu).
         """
         self.raw_root = Path(raw_path)
         self.reference_yaml = Path(reference_yaml)
         self.reference_key = reference_key
+        self.duplicate_iou_threshold = duplicate_iou_threshold
         self.class_taxonomy: ClassTaxonomy = {}
         self.target_names: Dict[int, str] = {}
         self.problems: List[str] = []
+        self.warnings: List[str] = []  # non bloquant - voir point 5 de la docstring du module
 
     def _fail(self, msg: str) -> None:
         print(f"❌ {msg}")
         self.problems.append(msg)
+
+    def _warn(self, msg: str) -> None:
+        self.warnings.append(msg)
 
     def _list_batches(self) -> List[Path]:
         """Sous-dossiers de premier niveau = lots d'annotation (ex: SB 1, SL 11-16...)."""
@@ -168,8 +206,14 @@ class RawDatasetValidator:
             unknown_local_ids: Set[int] = set()
             unresolved_names: Set[str] = set()
             n_malformed = 0
+            # (lab_path, nom classe cible, ligne A, ligne B, iou) - point 5, non bloquant.
+            duplicate_candidates: List[tuple] = []
 
             for lab_path in expected_labels & all_labels:
+                # target_id -> [(lineno, geom)] - remis à zéro à chaque image : un doublon
+                # ne compare que des masques de la MÊME image, jamais entre deux images.
+                class_polygons: Dict[int, List[tuple]] = {}
+
                 for lineno, line in enumerate(lab_path.read_text(encoding="utf-8").splitlines(), start=1):
                     parts = line.strip().split()
                     if not parts:
@@ -199,6 +243,29 @@ class RawDatasetValidator:
                     resolved = resolve_class_name(name, self.class_taxonomy)
                     if resolved is None:
                         unresolved_names.add(name)
+                    elif isinstance(resolved, int):
+                        # EXCLUDE (chaîne) et None déjà écartés par ce elif - seule une
+                        # vraie super-classe cible entre dans la comparaison de doublons.
+                        try:
+                            geom = Polygon(list(zip(coords[0::2], coords[1::2])))
+                        except Exception:
+                            geom = None
+                        if geom is not None:
+                            class_polygons.setdefault(resolved, []).append((lineno, geom))
+
+                # Comparaison par PAIRE, seulement entre masques de même classe cible
+                # résolue sur cette même image (voir class_polygons ci-dessus).
+                for target_id, polys in class_polygons.items():
+                    for i in range(len(polys)):
+                        lineno_a, geom_a = polys[i]
+                        for j in range(i + 1, len(polys)):
+                            lineno_b, geom_b = polys[j]
+                            iou = polygon_iou(geom_a, geom_b)
+                            if iou >= self.duplicate_iou_threshold:
+                                duplicate_candidates.append((
+                                    lab_path, self.target_names.get(target_id, str(target_id)),
+                                    lineno_a, lineno_b, iou,
+                                ))
 
             print(f"  [{batch_dir.name}] {len(images)} images / {len(all_labels)} labels "
                   f"- classes utilisées : {sorted(used_names)}")
@@ -241,6 +308,22 @@ class RawDatasetValidator:
                 ok = False
                 self._fail(f"[{batch_dir.name}] {n_malformed} ligne(s) de label mal formée(s).")
 
+            if duplicate_candidates:
+                # NON bloquant - ok reste inchangé. Voir point 5 de la docstring du module.
+                self._warn(
+                    f"[{batch_dir.name}] {len(duplicate_candidates)} paire(s) de masques "
+                    f"probablement en double (même classe cible, IoU ≥ "
+                    f"{self.duplicate_iou_threshold:.0%}, même image)."
+                )
+                print(f"  🔁 [{batch_dir.name}] {len(duplicate_candidates)} doublon(s) d'annotation "
+                      f"probable(s) (même classe cible, IoU ≥ {self.duplicate_iou_threshold:.0%}, "
+                      f"même image) - à relire manuellement (pas corrigé automatiquement) :")
+                for lab_path, cls_name, la, lb, iou in duplicate_candidates[:10]:
+                    print(f"      • {lab_path.relative_to(self.raw_root)} : lignes {la} & {lb} "
+                          f"({cls_name}, IoU={iou:.0%})")
+                if len(duplicate_candidates) > 10:
+                    print(f"      ... (+{len(duplicate_candidates) - 10} autre(s))")
+
         return ok
 
     def run_all(self) -> bool:
@@ -258,6 +341,13 @@ class RawDatasetValidator:
             print("✅ Dataset brut cohérent — tu peux lancer split_dataset.py (étape 2).")
         else:
             print(f"❌ {len(self.problems)} problème(s) détecté(s) — NE LANCE PAS le slicing avant correction.")
+        if self.warnings:
+            print(
+                f"ℹ️  {len(self.warnings)} avertissement(s) non bloquant(s) - doublons d'annotation "
+                f"probables (détail 🔁 ci-dessus). N'empêche pas de lancer le pipeline, mais à relire "
+                f"avant de considérer le dataset propre - chaque doublon non corrigé se retrouve "
+                f"démultiplié dans 4_sliced_dataset (une paire par tuile qui recouvre la zone)."
+            )
         return all_ok
 
 
@@ -283,8 +373,18 @@ if __name__ == "__main__":
              "(la taxonomie est toujours chargée via class_config.load_class_config, qui lit "
              "à la fois class_taxonomy et class_aliases).",
     )
+    parser.add_argument(
+        "--duplicate-iou-threshold",
+        type=float,
+        default=0.5,
+        help="Seuil d'IoU au-delà duquel deux masques de même classe cible sur la même image "
+             "sont signalés comme doublon probable (avertissement non bloquant, voir point 5 "
+             "de la docstring du module). Défaut : 0.5.",
+    )
     args = parser.parse_args()
 
-    validator = RawDatasetValidator(args.raw_path, args.reference_yaml, args.reference_key)
+    validator = RawDatasetValidator(
+        args.raw_path, args.reference_yaml, args.reference_key, args.duplicate_iou_threshold
+    )
     success = validator.run_all()
     sys.exit(0 if success else 1)

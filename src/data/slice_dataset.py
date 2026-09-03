@@ -7,20 +7,16 @@ Lit les images parentes complètes et déjà réparties par split depuis
 `3_augmented_dataset/{images,labels}/{train,val,test}`, et les découpe en
 imagettes 640x640 dans `4_sliced_dataset/{images,labels}/{train,val,test}`.
 
-Cette étape ne décide plus du split (fait à l'étape 2, split_dataset.py) ni de
+Cette étape ne décide pas du split (fait à l'étape 2, split_dataset.py) ni de
 la traduction des classes par lot (faite elle aussi à l'étape 2, une seule fois
 pour toutes - voir class_config.py) : les fichiers qu'elle lit sont déjà dans
 le référentiel canonique de classes (super-classes cibles) et déjà répartis.
-Elle ne fait plus que de la géométrie : sliding window, clipping des polygones
-aux bords de tuile, filtrage des micro-débris. Elle n'a plus aucune notion de
-classe (voir slicer.py, révisé le 19/08/2026).
+Elle ne fait que de la géométrie : sliding window, clipping des polygones aux
+bords de tuile, filtrage des micro-débris - elle n'a aucune notion de classe.
 
-(Anciennement `data_pipeline.py`. Renommé lors du passage à un orchestrateur
-unique : `data_pipeline.py` est désormais le point d'entrée qui enchaîne les
-4 étapes - vérification -> split -> augmentation -> slicing - et ce fichier
-n'en est plus que la 4e brique. Reste utilisable seul, pour ne relancer QUE le
-slicing après un ajustement du slicer sans repasser par tout le pipeline :
-`python src/data/slice_dataset.py --force`.)
+Peut être relancée seule (sans repasser par tout le pipeline, voir
+data_pipeline.py pour l'orchestrateur complet des 4 étapes), typiquement après
+un ajustement du slicer.
 
 Garde-fou de cohérence de config
 ---------------------------------
@@ -29,9 +25,15 @@ Le cache incrémental (on ne re-tuile pas un parent déjà présent dans
 overlap, discard_truncated, min_area_ratio) et la logique interne du slicer
 (LOGIC_VERSION) sont identiques à celles utilisées lors du run précédent - voir
 src/data/pipeline_utils.py. Le référentiel de classes (config/data_config.yaml)
-n'a plus d'influence ICI (le slicer ne connaît plus les classes) : un
-changement de class_taxonomy invalide le cache de l'étape 2 (split_dataset.py),
-pas celui-ci. Sinon, --force permet de repartir de zéro.
+n'a pas d'influence ICI (le slicer ne connaît pas les classes) : un changement
+de class_taxonomy invalide le cache de l'étape 2 (split_dataset.py), pas
+celui-ci. Sinon, --force permet de repartir de zéro.
+
+Entrée : images + labels déjà répartis par split, dans 3_augmented_dataset/.
+Sortie : imagettes 640x640 + labels associés, dans 4_sliced_dataset/.
+
+Exemple :
+    python src/data/slice_dataset.py --force
 """
 
 import argparse
@@ -58,22 +60,19 @@ MANIFEST_FILENAME = ".slicing_manifest.json"
 def _slicing_params(slicer: PlasticImageSlicer, augmented_dir: Path) -> Dict:
     """Sérialise tous les paramètres qui influencent la sortie du slicer.
 
-    Le slicer n'a plus aucune notion de classes (traduction faite une seule
-    fois en amont, à l'étape 2 - voir split_dataset.py et class_config.py) :
-    seuls les paramètres géométriques du constructeur comptent ici. Inclut
-    aussi `LOGIC_VERSION` (slicer.py) : un changement de comportement interne
-    du slicer sans changement de paramètre de constructeur (ex: la règle de
-    rétention des tuiles de fond, v2) doit lui aussi invalider le cache -
-    sinon deux logiques différentes se mélangeraient silencieusement dans le
-    même dossier de sortie.
+    Le slicer n'a aucune notion de classes (traduction faite en amont, à
+    l'étape 2 - voir split_dataset.py et class_config.py) : seuls les
+    paramètres géométriques du constructeur comptent ici, plus
+    `LOGIC_VERSION` (slicer.py) pour capturer un changement de comportement
+    interne du slicer sans changement de paramètre de constructeur.
 
-    "upstream_augment_fingerprint" (24/08/2026) : propage le fingerprint de
-    l'étape amont (augmentation, elle-même dépendante du split) - voir
-    read_upstream_fingerprint() dans pipeline_utils.py. Sans ça, un changement
-    de logique de split (ex: v2 -> v3) qui ne change AUCUN paramètre local du
-    slicer ne serait jamais détecté ici, et --force sur data_pipeline.py
-    rewiperait le split sans jamais rewiper le slicing correspondant - même
-    risque de fuite train/val/test qu'entre split et augmentation.
+    Inclut aussi le fingerprint de l'étape amont (augmentation, elle-même
+    dépendante du split - voir read_upstream_fingerprint() dans
+    pipeline_utils.py), pour qu'un changement de logique de split invalide
+    aussi le cache de slicing même sans changement de paramètre local.
+
+    Entrée : slicer configuré + chemin du dossier 3_augmented_dataset.
+    Sortie : dict de paramètres, utilisé pour calculer le fingerprint du run.
     """
     return {
         "slicer_logic_version": LOGIC_VERSION,
@@ -86,15 +85,14 @@ def _slicing_params(slicer: PlasticImageSlicer, augmented_dir: Path) -> Dict:
     }
 
 
-def run_slice(force: bool = False, augmented_dir: str = AUGMENTED_DIR, sliced_dir: str = SLICED_DIR):
+def run_slice(force: bool = False, augmented_dir: str = AUGMENTED_DIR, sliced_dir: str = SLICED_DIR, run_confirmation=None):
     # discard_truncated=False : conserve et découpe la géométrie au bord de la tuile.
-    # La traduction des classes brutes -> super-classes cibles a désormais lieu UNE
-    # SEULE FOIS, en amont, à l'étape 2 (split_dataset.py, voir class_config.py) : les
-    # fichiers lus ici sont déjà dans le référentiel final. Le slicer n'a donc plus de
-    # paramètre lié aux classes (voir sa docstring, révisée le 19/08/2026).
+    # La traduction des classes brutes -> super-classes cibles a lieu en amont, à
+    # l'étape 2 (split_dataset.py, voir class_config.py) : les fichiers lus ici sont
+    # déjà dans le référentiel final. Le slicer n'a donc pas de paramètre lié aux classes.
     # max_black_fraction=0.5 : écarte une tuile de fond (sans objet annoté) dont plus de
     # la moitié des pixels sont ~noirs - triangles de bordure de rotation d'orthomosaïque
-    # découpée à la main, pas de vrais exemples de fond de scène (voir slicer.py, 22/08/2026).
+    # découpée à la main, pas de vrais exemples de fond de scène.
     slicer = PlasticImageSlicer(tile_size=640, overlap=256, discard_truncated=False, max_black_fraction=0.5)
 
     augmented_dir_p = Path(augmented_dir)
@@ -105,6 +103,7 @@ def run_slice(force: bool = False, augmented_dir: str = AUGMENTED_DIR, sliced_di
         force=force,
         wipe_subdirs=["images", "labels"],
         manifest_filename=MANIFEST_FILENAME,
+        run_confirmation=run_confirmation,
     )
     processed_count = 0
     skipped_count = 0

@@ -3,6 +3,15 @@
 """
 PixelOdyssey - Découverte des images parentes dans le dataset brut annoté.
 
+Logique partagée par l'étape 2 (split_dataset.py) et par tout outil ayant
+besoin de parcourir `1_annotated_dataset` (ex: le checker pré-slicing).
+
+Entrée : chemin du dossier racine du dataset annoté brut.
+Sortie : liste de dicts décrivant chaque image parente trouvée et son label.
+
+Exemple :
+    from src.data.raw_dataset import collect_parent_images
+    parents = collect_parent_images("data/1_annotated_dataset")
 """
 
 from pathlib import Path

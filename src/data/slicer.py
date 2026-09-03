@@ -1,36 +1,49 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PixelOdyssey - Slicer d'Images Géospatiales & Labels YOLO-seg.
+PixelOdyssey - Slicer d'images géospatiales & labels YOLO-seg.
 
-Fonctionnalités principales :
------------------------------
-1. Slicing Dynamique (Sliding Window) : Découpage d'images géantes/tuiles en fenêtres 640x640 avec overlap.
-2. Gestion des Bords Tronqués (discard_truncated) :
-   - False -> Recadre les polygones sur les limites de la tuile (Clipping) et re-calcule les coordonnées relatives.
-   - True  -> Supprime strictement les annotations coupées par la bordure.
-3. Protection contre les Micro-Débris (min_area_ratio) : Écarte les objets amputés à plus de (1 - min_area_ratio).
-4. Rétention des images "sans déchet" (background) : si l'image parente entière n'a
-   aucun objet annoté, TOUTES ses tuiles sont gardées (voir `parent_is_all_background`
-   ci-dessous) - utile pour équilibrer l'entraînement. Une tuile vide au sein d'une
-   image par ailleurs non-vide reste sous-échantillonnée (1 sur 10).
-5. Support multi-résolution : Traitement unifié des orthomosaïques brutes ou tuiles 1024x1024.
-6. Filtre anti-bordure noire (max_black_fraction) : les JPG découpés à la main à partir
-   d'un orthomosaïque brut (mal orienté à la verticale) portent des triangles noirs sur
-   les côtés. Une tuile SANS OBJET ANNOTÉ dont la fraction de pixels ~noirs dépasse ce
-   seuil (0.5 par défaut) est écartée plutôt que gardée comme "exemple de fond" - sinon
-   ces bordures, qui ne sont pas de vrais fonds de scène, diluent la valeur des exemples
-   de fond réellement propres. Une tuile contenant un objet annoté n'est JAMAIS écartée
-   pour cette raison, quel que soit son contenu noir.
+Découpe une image (orthomosaïque brute ou tuile déjà pré-découpée) et ses
+annotations YOLO-seg en tuiles carrées par fenêtre glissante (sliding
+window, avec overlap configurable).
 
-Ce module NE CONNAÎT PLUS RIEN aux classes (retiré le 19/08/2026) : il lit et
-écrit les IDs de classe présents dans les fichiers .txt tels quels, sans les
-traduire. Toute la traduction (nom de classe du lot -> super-classe cible, ou
-exclusion) se fait désormais en amont, une seule fois, à l'étape 2
-(split_dataset.py) - voir class_config.py pour le référentiel. Par construction,
-les fichiers que ce slicer reçoit sont donc déjà dans l'espace de classes FINAL :
-il ne fait plus que de la géométrie (sliding window, clipping aux bords de tuile,
-filtrage des micro-débris).
+Fonctionnalités :
+- Slicing par fenêtre glissante en tuiles de taille configurable, avec overlap.
+- Gestion des bords tronqués (discard_truncated) : False -> recadre le polygone
+  sur la bordure de la tuile (clipping) et recalcule les coordonnées relatives ;
+  True -> supprime l'annotation coupée par le bord.
+- Protection contre les micro-débris (min_area_ratio) : écarte un objet tronqué
+  dont l'aire restante passe sous ce ratio de son aire d'origine.
+- Rétention des tuiles "sans déchet" (background) pour équilibrer
+  l'entraînement : si l'image parente entière n'a aucun objet annoté, toutes
+  ses tuiles sont gardées ; au sein d'une image par ailleurs annotée, une
+  tuile vide sur 10 est gardée.
+- Support multi-résolution : traite aussi bien des orthomosaïques brutes que
+  des tuiles déjà découpées.
+- Filtre anti-bordure noire (max_black_fraction) : écarte une tuile SANS
+  OBJET ANNOTÉ dont la fraction de pixels ~noirs dépasse ce seuil, plutôt que
+  de la garder comme "exemple de fond" (typiquement des bordures de rotation
+  d'orthomosaïque, pas de vrais fonds de scène). N'écarte jamais une tuile
+  contenant un objet annoté.
+
+Ce module ne connaît pas les classes : il lit et écrit les IDs de classe
+présents dans les fichiers .txt tels quels, sans les traduire. La traduction
+(nom de classe du lot -> super-classe cible, ou exclusion) se fait en amont,
+à l'étape 2 (split_dataset.py) - voir class_config.py pour le référentiel.
+Les fichiers que ce slicer reçoit sont donc déjà dans l'espace de classes
+final : il ne fait que de la géométrie (fenêtre glissante, clipping aux
+bords de tuile, filtrage des micro-débris).
+
+Entrée : une paire image + labels YOLO-seg, et les dossiers de sortie.
+Sortie : fichiers image (.png) et labels (.txt) de chaque tuile, écrits sur
+disque ; nombre de tuiles produites.
+
+Exemple :
+    from src.data.slicer import PlasticImageSlicer
+    slicer = PlasticImageSlicer(tile_size=640, overlap=256)
+    n_tiles = slicer.slice_single_pair(
+        "img.jpg", "img.txt", "out/images", "out/labels"
+    )
 """
 
 from pathlib import Path
@@ -43,19 +56,14 @@ from shapely.geometry import MultiPolygon, Polygon, box
 from src.data.image_io import load_image_bgr
 from src.data.tiling_geometry import iter_tile_windows
 
-# Incrémenter quand la LOGIQUE interne de tuilage change de façon à produire
-# une sortie différente pour les MÊMES paramètres de constructeur (ex: la
-# règle de sous-échantillonnage des tuiles vides ci-dessous, v2 ; le correctif
-# des images plus petites que tile_size, v3 ; le chargement via
-# `image_io.load_image_bgr` au lieu de `cv2.imread` direct, v4 - une image
-# TIFF multi-bandes (RGB+alpha/NIR, cf. .tif accepté par 1_annotated_dataset)
-# pouvait auparavant être écrite en tuile à 4 canaux au lieu de 3, voir
-# image_io.py pour le détail du bug). Les paramètres du constructeur
-# (tile_size, overlap, ...) sont déjà inclus dans le fingerprint du cache
-# incrémental (voir slice_dataset.py) ; ce numéro de version couvre les
-# changements de comportement qui n'ont pas de paramètre dédié - sans lui, un
-# tel changement passerait inaperçu par le garde-fou de cache et mélangerait
-# silencieusement deux logiques différentes dans le même dossier de sortie.
+# Incrémenter quand la logique interne de tuilage change de façon à produire
+# une sortie différente pour les MÊMES paramètres de constructeur. Les
+# paramètres du constructeur (tile_size, overlap, ...) sont déjà inclus dans
+# le fingerprint du cache incrémental (voir slice_dataset.py) ; ce numéro
+# couvre les changements de comportement qui n'ont pas de paramètre dédié -
+# sans lui, un tel changement passerait inaperçu par le garde-fou de cache et
+# mélangerait silencieusement deux logiques différentes dans le même dossier
+# de sortie.
 LOGIC_VERSION = 4
 
 
@@ -162,22 +170,12 @@ class PlasticImageSlicer:
 
         img_h, img_w, _ = img.shape
 
-        # Cas d'une image déjà PLUS PETITE OU ÉGALE à la tuile cible dans les deux
-        # dimensions (ex: une "imagette" déjà découpée par l'annotateur - lots SB,
-        # potentiellement pas exactement 640x640) : rien à faire glisser, l'image
-        # entière tient dans une seule tuile. Corrigé le 22/08/2026 (LOGIC_VERSION 3) -
-        # AVANT, seule l'égalité STRICTE (== tile_size dans les deux dimensions)
-        # déclenchait ce passage direct ; toute image plus petite (ex: 512x512)
-        # tombait dans la boucle de fenêtre glissante ci-dessous, qui suppose que
-        # l'image est AU MOINS aussi grande que tile_size. Sur une image plus
-        # petite, `iter_tile_windows` génère plusieurs fenêtres qui se ramènent
-        # TOUTES au même coin (0,0) une fois bridées aux limites de l'image - même
-        # nom de fichier de sortie écrit plusieurs fois de suite (silencieusement,
-        # sans erreur), et la tuile écrite fait la taille de l'image source, pas
-        # tile_size x tile_size. Ultralytics redimensionne (letterbox) chaque image
-        # à l'entraînement de toute façon, donc garder la taille native ici est
-        # inoffensif ; ce qui comptait était d'arrêter de fabriquer des doublons
-        # silencieux et un compte de tuiles faux.
+        # Cas d'une image déjà plus petite ou égale à la tuile cible dans les deux
+        # dimensions (ex: une "imagette" déjà découpée par l'annotateur, pas
+        # forcément exactement tile_size x tile_size) : rien à faire glisser,
+        # l'image entière tient dans une seule tuile, écrite à sa taille native
+        # (Ultralytics redimensionne/letterbox chaque image à l'entraînement de
+        # toute façon).
         if img_h <= self.tile_size and img_w <= self.tile_size:
             polygons = self._load_yolo_labels(label_p, img_w, img_h)
             tile_labels = []
@@ -191,10 +189,10 @@ class PlasticImageSlicer:
 
             # Filtre anti-bordure noire : cette image (déjà <= tile_size, ex: une
             # "imagette" pré-découpée) constitue elle-même sa seule et unique tuile.
-            # Si elle n'a aucun objet annoté ET qu'elle est majoritairement noire, elle
-            # ne vaut pas un exemple de fond utile - écartée entièrement (0 tuile en
-            # sortie pour ce parent), plutôt que gardée comme dans les anciennes
-            # versions. Une tuile avec un objet annoté n'est jamais concernée.
+            # Si elle n'a aucun objet annoté ET qu'elle est majoritairement noire,
+            # elle ne vaut pas un exemple de fond utile - écartée entièrement (0
+            # tuile en sortie pour ce parent). Une tuile avec un objet annoté n'est
+            # jamais concernée.
             if not tile_labels and self._black_fraction(img) > self.max_black_fraction:
                 return 0
 
@@ -256,20 +254,20 @@ class PlasticImageSlicer:
                         tile_labels.append(f"{poly['class_id']} {coords_str}\n")
 
             # On garde une tuile si : elle contient un objet, OU l'image parente est
-            # entièrement background (auquel cas ON GARDE TOUT - ce sont précisément
-            # les images "sans déchets" utiles pour équilibrer l'entraînement, jeter
-            # 90% de leurs tuiles serait contre-productif), OU 1 tuile vide sur 10 sinon
-            # (juste pour garder quelques exemples de fond au sein d'une image qui
-            # contient par ailleurs des objets, sans exploser le nombre de tuiles vides).
+            # entièrement background (auquel cas on garde tout - ce sont précisément
+            # les images "sans déchets" utiles pour équilibrer l'entraînement), OU 1
+            # tuile vide sur 10 sinon (pour garder quelques exemples de fond au sein
+            # d'une image qui contient par ailleurs des objets, sans exploser le
+            # nombre de tuiles vides).
             #
-            # Filtre anti-bordure noire (ajouté le 22/08/2026) : une tuile SANS OBJET
-            # qui serait gardée par une des deux règles de fond ci-dessus (parent
-            # entièrement background, ou tirage 1/10) est en plus soumise au test de
-            # fraction noire - si elle dépasse le seuil, c'est très probablement un
-            # triangle de bordure de rotation d'orthomosaïque, pas un vrai exemple de
-            # fond de scène, et elle est écartée. Une tuile qui contient un objet
-            # annoté n'est JAMAIS concernée par ce filtre, quel que soit son contenu
-            # noir (tile_labels non-vide -> keep_as_background jamais évalué).
+            # Filtre anti-bordure noire : une tuile SANS OBJET qui serait gardée par
+            # une des deux règles de fond ci-dessus (parent entièrement background,
+            # ou tirage 1/10) est en plus soumise au test de fraction noire - si elle
+            # dépasse le seuil, c'est très probablement un triangle de bordure de
+            # rotation d'orthomosaïque, pas un vrai exemple de fond de scène, et elle
+            # est écartée. Une tuile qui contient un objet annoté n'est jamais
+            # concernée par ce filtre (tile_labels non-vide -> keep_as_background
+            # jamais évalué).
             keep_as_background = False
             if not tile_labels:
                 would_keep = parent_is_all_background or (tile_count % 10 == 0)

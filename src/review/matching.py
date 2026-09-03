@@ -3,10 +3,10 @@
 """
 PixelOdyssey - Appariement GT <-> prédictions par classe + IoU.
 
-Utilisé par label_review.py pour décider, pour chaque objet prédit par le
-modèle sur une image parente, s'il correspond à une annotation existante
-(GT), et à quel point la correspondance est bonne (IoU) - la base des 3
-paniers de triage (voir label_review.py) :
+Décide, pour chaque objet prédit par le modèle sur une image parente, s'il
+correspond à une annotation existante (GT) et à quel point la correspondance
+est bonne (IoU). Utilisé par label_review.py comme base des 3 paniers de
+triage :
   - prédiction sans GT correspondant (au-delà du seuil de confiance)
     -> annotation potentiellement oubliée.
   - GT et prédiction appariées mais IoU faible -> masque potentiellement
@@ -15,11 +15,20 @@ paniers de triage (voir label_review.py) :
     de proposition à faire, rien à injecter).
 
 Algorithme glouton (pas d'appariement optimal type Hongrois) : pour chaque
-classe, on trie les paires (GT, prédiction) qui se recoupent par IoU
-décroissante, et on les accepte tant que ni la GT ni la prédiction n'ont déjà
-été prises. Suffisant ici car les objets annotés sur une image de déchets ne
-se chevauchent quasiment jamais au point de créer une ambiguïté d'appariement
-- un algorithme plus sophistiqué serait une optimisation prématurée.
+classe, les paires (GT, prédiction) qui se recoupent sont triées par IoU
+décroissante et acceptées tant que ni la GT ni la prédiction n'ont déjà été
+prises. Suffisant car les objets annotés sur une image de déchets ne se
+chevauchent quasiment jamais au point de créer une ambiguïté d'appariement.
+
+Entrée : listes de `LabeledPolygon` (GT et prédictions), seuil `min_iou`.
+Sortie : liste de `MatchResult` (appariements et non-appariements des deux côtés).
+
+Exemple :
+    from src.review.matching import match_gt_to_predictions, LabeledPolygon
+    results = match_gt_to_predictions(gt_objects, predictions, min_iou=0.1)
+    for r in results:
+        if r.gt is not None and r.pred is None:
+            ...  # annotation potentiellement oubliée
 """
 
 from typing import Dict, List, NamedTuple, Optional

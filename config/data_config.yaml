@@ -1,49 +1,20 @@
 # PixelOdyssey - Configuration du Dataset pour YOLOv11-seg
 
-# Chemins d'accès racine et dossiers de split
+# Chemins d'accès racine et dossiers de split.
 # 4_sliced_dataset = sortie de l'étape 4 (src/data/slice_dataset.py), les imagettes 640x640
 # prêtes pour YOLO. Généré en lançant tout le pipeline en une fois avec
 # `python src/data/data_pipeline.py` (orchestrateur qui enchaîne vérification -> split ->
 # augmentation -> slicing).
-# (Anciennement "processed_dataset", renommé lors du passage à une organisation en 4 étapes
-# numérotées : 1_annotated_dataset -> 2_split_dataset -> 3_augmented_dataset -> 4_sliced_dataset.)
 path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset
 train: images/train
 val: images/val
 test : images/test
 
 # ============================================================================
-# TAXONOMIE CIBLE — 2e révision (21/08/2026), regroupement par FORME plutôt
-# que par matière/rigidité.
-#
-# Décidée à partir d'un audit chiffré du dataset réel (src/data/dataset_audit.py,
-# run du 21/08/2026 sur 540 images parentes) plutôt qu'à l'intuition seule :
-# nombre d'instances par classe brute + coefficient de variation de l'aire et
-# du ratio largeur/hauteur (une classe à forme vraiment récurrente a un CV
-# bas ; un fourre-tout de fragments a un CV élevé). Décisions notables issues
-# de cet audit :
-#   - "casques" (0 instance réelle) et "Bouées pieuvre" (0 instance réelle)
-#     sont des classes fantômes dans les data.yaml de lot - jamais dessinées
-#     dans une seule annotation. Placées par précaution (casques -> fourre-
-#     tout, Bouées pieuvre -> Bouee) au cas où un futur lot en amène, mais
-#     aucun exemple d'entraînement à attendre d'elles aujourd'hui.
-#   - "Sceau" (5 instances) trop rare pour une classe à part ou pour un
-#     regroupement dédié avec casques ("déchet rigide volumineux" envisagé
-#     puis abandonné, forme trop différente entre un seau et un casque de
-#     toute façon) -> fourre-tout.
-#   - "bouchons" (124 instances, cv_ratio_lxh=0.158 - le plus bas du dataset)
-#     et "Petit bidon" (61 instances, cv_ratio_lxh=0.255) ont une forme bien
-#     plus cohérente que prévu -> classes dédiées plutôt que fourre-tout.
-#   - "bouees" (12 instances) et "flotteurs" (18 instances) ont chacun une
-#     forme très cohérente (cv_ratio_lxh 0.10 et 0.18) mais trop peu
-#     d'exemples séparément -> regroupés en une seule classe "Bouee" (30
-#     instances combinées).
-#   - "Cordage" a le cv_aire le plus élevé du dataset (2.135) mais c'est un
-#     artefact de la métrique (une corde enroulée vs étalée a des boîtes
-#     englobantes très différentes pour un objet tout aussi reconnaissable) -
-#     pas un signal contre le garder séparé.
-#
-# names ci-dessous = les super-classes cibles (ce que le modèle apprend).
+# TAXONOMIE CIBLE : les super-classes apprises par le modèle. Regroupement
+# par FORME plutôt que par matière/rigidité : une classe dédiée a une forme
+# suffisamment récurrente et assez d'exemples pour être apprise séparément ;
+# sinon elle rejoint Debris_Divers (fourre-tout).
 # ============================================================================
 names:
   0: Bouteille
@@ -51,27 +22,18 @@ names:
   2: Cagette
   3: Bouee
   4: Cordage_Filet
-  5: Bouchon
-  6: Bidon
-  7: Debris_Divers
+  5: Bidon
+  6: Debris_Divers
 
 # ============================================================================
 # RÉFÉRENTIEL UNIQUE DE CLASSES — source de vérité pour tout le projet.
 #
-# Modèle par NOM (révisé le 19/08/2026, voir historique dans class_config.py).
-# Avant, un référentiel numérique fixe (raw_classes, 0-20) + une table de
-# traduction id->id par lot (batch_class_overrides) - abandonné parce qu'un
-# lot qui déclare simplement MOINS de classes qu'un autre (ex: SL, qui n'a
-# jamais eu la classe "à déterminer" apparue avec A LEG1_1/A LEG3_1) faisait
-# échouer une comparaison d'égalité stricte, alors qu'il n'y avait aucun
-# problème réel.
-#
-# Fonctionnement actuel : chaque lot garde son PROPRE data.yaml local tel
-# quel (peu importe combien de classes il déclare, dans quel ordre, avec
-# quels IDs). Pour traduire un label, on lit le nom de la classe via ce
-# data.yaml local (voir class_config.load_batch_local_names), on le normalise
-# (casse/accents/underscores - voir class_config.normalize_class_name), puis
-# on le cherche ci-dessous dans `class_taxonomy`.
+# Chaque lot garde son PROPRE data.yaml local tel quel (peu importe combien
+# de classes il déclare, dans quel ordre, avec quels IDs). Pour traduire un
+# label, on lit le nom de la classe via ce data.yaml local (voir
+# class_config.load_batch_local_names), on le normalise (casse/accents/
+# underscores - voir class_config.normalize_class_name), puis on le cherche
+# ci-dessous dans `class_taxonomy`.
 #
 # class_taxonomy : dict {nom de classe: ID de super-classe cible, ou "exclude"}.
 #   La clé est écrite avec l'orthographe "de référence" (peu importe laquelle
@@ -105,66 +67,68 @@ class_taxonomy:
   # -> 2: Cagette (grille/caisse, forme récurrente malgré une taille variable)
   "cagette": 2
 
-  # -> 3: Bouee (bouees + flotteurs regroupés : forme individuellement très
-  # cohérente - cv_ratio_lxh 0.10 et 0.18 - mais trop peu d'exemples chacun
-  # séparément pour tenir seuls, voir l'audit du 21/08/2026 ci-dessus)
+  # -> 3: Bouee (bouees + flotteurs regroupés : formes individuellement
+  # cohérentes mais trop peu d'exemples séparément pour tenir seules)
   "Bouées": 3
-  "Bouées pieuvre": 3       # 0 instance réelle à ce jour, placée par précaution
+  "Bouées pieuvre": 3       # classe fantôme (jamais observée), placée par précaution
   "flotteurs": 3
 
   # -> 4: Cordage_Filet (fils, bout, filet de pêche)
   "Cordage": 4
 
-  # -> 5: Bouchon (petit objet à forme très constante - cv_ratio_lxh=0.158,
-  # le plus bas du dataset - et volume correct : 124 instances)
-  "bouchons": 5
+  # -> 5: Bidon (Petit bidon - forme assez cohérente mais peu d'exemples -
+  # à surveiller si le rappel de cette classe reste faible, faute de données)
+  "Petit bidon": 5
+  "Sceau": 5
 
-  # -> 6: Bidon (Petit bidon - forme assez cohérente, cv_ratio_lxh=0.255,
-  # mais volume plus modeste : 61 instances - à surveiller si le rappel de
-  # cette classe reste faible après entraînement, faute de données)
-  "Petit bidon": 6
+  # -> 6: Debris_Divers (fourre-tout : formes non récurrentes ou pas assez
+  # d'exemples pour être apprises séparément - fragments, mousses, sacs,
+  # textiles, polystyrène, Bouchon, et les classes quasi-fantômes
+  # Sceau/casques). Inconnu volontairement PAS mappé ici - voir "exclue"
+  # ci-dessous.
+  "Plastique souple (sac)": 6
+  "Mousse expansée": 6
+  "Polystyrene": 6
+  "Fragments plastique rigide": 6
+  "Tissu": 6
+  "casques": 6                # classe fantôme (jamais observée), placée par précaution
+  "bouchons": 6
 
-  # -> 7: Debris_Divers (fourre-tout : forme non récurrente/pas assez
-  # d'exemples pour être apprise séparément - fragments, mousses, sacs,
-  # textiles, polystyrène, et les classes quasi-fantômes Sceau/casques)
-  "Plastique souple (sac)": 7
-  "Mousse expansée": 7
-  "Polystyrene": 7
-  "Fragments plastique rigide": 7
-  "Tissu": 7
-  "Sceau": 7                # 5 instances réelles seulement
-  "casques": 7               # 0 instance réelle à ce jour, placée par précaution
-
-  # -> exclue (jamais des déchets plastiques valides, ou classe pas encore assumée)
-  "Inconnu": exclude
+  # -> exclue (matière confirmée non-plastique, classe pas encore assumée, ou
+  # label jugé trop hétérogène pour être mappé vers une super-classe)
   "Morceaux de bois": exclude
   "Verre": exclude
-  "à déterminer": exclude  # apparue avec les lots A LEG1_1 / A LEG3_1 (2026-08-19)
+  "à déterminer": exclude  # sémantiquement proche d'"Inconnu" mais pas encore confirmée
+                            # équivalente - à trancher explicitement plus tard
+  "Inconnu": exclude       # ré-exclu le 26/08/2026 : le run ablation_no_copy_paste_
+                            # yolo11n-seg_20260826_232932 a montré que sa fusion dans
+                            # Debris_Divers (tentée plus tôt le même jour) faisait de
+                            # cette classe un aimant à confusion (56% des vrais Bouee
+                            # prédits Debris_Divers, 70% des fausses alertes sur fond
+                            # étiquetées Debris_Divers) - voir journal pour le détail
 
-  # Auto-mapping des 8 super-classes VERS ELLES-MÊMES (25/08/2026) : nécessaire
-  # pour src/review/bootstrap_annotate.py (validation d'un nouveau lot "cold
+  # Auto-mapping des super-classes VERS ELLES-MÊMES : nécessaire pour
+  # src/review/bootstrap_annotate.py (validation d'un nouveau lot "cold
   # start" à partir des prédictions du modèle - voir sa docstring). Ce lot
   # n'a, par construction, AUCUNE taxonomie fine existante (contrairement à
   # SB/SL/A LEG, ~20 sous-classes chacun) - son propre data.yaml local
-  # déclare donc directement les 8 super-classes comme classes locales,
-  # plutôt que d'inventer un niveau de sous-classe qui n'existerait que pour
-  # ce lot. Ces entrées permettent à ce nom de se résoudre vers lui-même
-  # (raw_dataset_checker.py bloquerait sinon ce lot au prochain passage,
-  # "Bouteille" par exemple n'apparaissant sinon dans aucune entrée de
-  # class_taxonomy - seules les sous-classes fines comme "bouteille PET" y
-  # sont). Sans effet sur les autres lots.
+  # déclare donc directement les super-classes comme classes locales, plutôt
+  # que d'inventer un niveau de sous-classe qui n'existerait que pour ce lot.
+  # Ces entrées permettent à ce nom de se résoudre vers lui-même
+  # (raw_dataset_checker.py bloquerait sinon ce lot, "Bouteille" par exemple
+  # n'apparaissant sinon dans aucune entrée de class_taxonomy - seules les
+  # sous-classes fines comme "bouteille PET" y sont). Sans effet sur les
+  # autres lots.
   "Bouteille": 0
   "Flipflops": 1
   "Cagette": 2
   "Bouee": 3
   "Cordage_Filet": 4
-  "Bouchon": 5
-  "Bidon": 6
-  "Debris_Divers": 7
+  "Bidon": 5
+  "Debris_Divers": 6
 
-# Vraies divergences d'orthographe entre lots (pas juste casse/accents/underscores,
+# Vraies divergences d'orthographe entre lots (au-delà de casse/accents/underscores,
 # déjà gérés par la normalisation automatique - voir class_config.normalize_class_name).
-# Découvert en comparant les data.yaml locaux de SB 1-5 à ceux de SL/A LEG :
 class_aliases:
   "flipflops": "fliflops"                                    # SB - faute de frappe vs SL ("fliflops")
   "bouteilles_pet": "bouteille PET"                           # SB - pluriel vs SL (singulier)

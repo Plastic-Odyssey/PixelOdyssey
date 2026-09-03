@@ -3,24 +3,19 @@
 """
 PixelOdyssey - Visionneuse image par image des prédictions du modèle.
 
-Objectif (2026-08-23) : les mosaïques `val_batchN_pred.jpg` générées par
-Ultralytics à la fin de l'entraînement compressent plusieurs images dans une
-seule grille minuscule - impossible d'inspecter sérieusement une prédiction
-précise. Cet outil fait tourner le modèle sur les images parentes une par
-une (même géométrie de tuilage qu'à l'entraînement - voir tiled_inference.py),
-superpose GT et prédictions en couleur selon leur statut, et génère une page
-HTML locale qui permet de naviguer image par image (boutons + flèches du
-clavier), avec un tri par nombre de ratés pour aller direct aux pires cas.
+Fait tourner le modèle sur les images parentes une par une (même géométrie
+de tuilage qu'à l'entraînement - voir tiled_inference.py), superpose GT et
+prédictions en couleur selon leur statut, et génère une page HTML locale
+pour naviguer image par image (boutons + flèches du clavier), avec un tri
+par nombre de ratés pour aller directement aux pires cas.
 
-PUREMENT DIAGNOSTIC - contrairement à label_review.py, cet outil n'écrit
-JAMAIS rien dans 1_annotated_dataset ni dans un export destiné à CVAT. Il ne
-sert qu'à REGARDER, pas à corriger. Si tu repères des annotations à corriger
-en le parcourant, c'est label_review.py (--scope all désormais) qu'il faut
-utiliser pour les faire remonter proprement vers CVAT.
+Outil purement diagnostic - contrairement à label_review.py, il n'écrit
+jamais rien dans 1_annotated_dataset ni dans un export destiné à CVAT. Il
+sert à regarder, pas à corriger : les annotations à corriger repérées en le
+parcourant se font remonter vers CVAT via label_review.py.
 
-Réutilise volontairement l'appariement GT<->prédictions déjà construit pour
-label_review.py (src/review/matching.py) plutôt que d'inventer une deuxième
-logique de comparaison qui pourrait diverger silencieusement :
+Réutilise l'appariement GT<->prédictions de src/review/matching.py (le même
+que label_review.py) :
   - GT et prédiction appariées, IoU >= iou_mismatch_threshold -> VERT (réussi)
   - GT et prédiction appariées, IoU < iou_mismatch_threshold  -> ORANGE
     (le modèle a vu l'objet mais le masque est mal ajusté - même seuil que le
@@ -30,8 +25,11 @@ logique de comparaison qui pourrait diverger silencieusement :
   - Prédiction sans GT correspondante, confiance >= conf_threshold
                                                                  -> BLEU
     (fausse alerte - faux positif). Une prédiction sous ce seuil n'est pas
-    dessinée du tout (bruit de tuile, jamais proposée nulle part ailleurs
-    dans le projet à ce niveau de confiance).
+    dessinée du tout (bruit de tuile).
+
+Entrée : manifeste de split (parent_manifest.json), images brutes, et soit
+un modèle entraîné (best.pt) soit un predict_tile_fn injecté.
+Sortie : page HTML interactive sous <output_dir>/<run_id>/index.html.
 
 Usage :
     python -m src.review.visualize_predictions
@@ -50,7 +48,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, load_batch_local_names, load_class_config
+from src.data.class_config import (
+    DEFAULT_CLASS_CONFIG_PATH,
+    assert_model_matches_taxonomy,
+    load_batch_local_names,
+    load_class_config,
+)
 from src.data.image_io import load_image_bgr
 from src.data.split_dataset import PARENT_MANIFEST_FILENAME, RAW_DIR, SPLIT_DIR
 from src.review.label_review import _discover_available_models, _load_gt_objects, _prompt_model_choice, RUNS_DIR
@@ -304,6 +307,12 @@ def run_visualize(
         predict_tile_fn = make_ultralytics_predict_fn(model_path, conf_threshold=tile_conf_threshold)
 
     class_taxonomy, target_names = load_class_config(DEFAULT_CLASS_CONFIG_PATH)
+
+    # Garde-fou : voir la même vérification dans label_review.py. Absent pour un
+    # predict_tile_fn injecté en test (pas d'attribut model_names).
+    model_names = getattr(predict_tile_fn, "model_names", None)
+    if model_names is not None:
+        assert_model_matches_taxonomy(model_names, target_names, model_label=str(model_path or ""))
 
     manifest_path = Path(split_dir) / PARENT_MANIFEST_FILENAME
     if not manifest_path.exists():

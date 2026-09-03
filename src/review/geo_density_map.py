@@ -3,34 +3,28 @@
 """
 PixelOdyssey - Carte de densité interactive sur orthomosaïque GeoTIFF complète.
 
-Contrairement à `visualize_predictions.py` (image parente entière chargée en
-mémoire via `image_io.load_image_bgr`, pensé pour des photos de terrain de
-quelques Mo), ce module cible directement les ORTHOMOSAÏQUES GeoTIFF issues de
-WebODM - potentiellement plusieurs centaines de Mo à plusieurs Go, bien trop
-grandes pour tenir en RAM d'un coup. Il lit donc l'image FENÊTRE PAR FENÊTRE
-via `rasterio` (jamais l'image entière en mémoire, sauf la version très
-sous-échantillonnée utilisée comme simple fond de carte visuel), et - point
-qui n'a jamais existé ailleurs dans le pipeline - conserve le géoréférencement
-(CRS + transformation affine) du GeoTIFF pour convertir chaque détection en
-coordonnées réelles (lon/lat WGS84), condition nécessaire à une vraie carte de
-densité géolocalisée plutôt qu'un simple schéma en coordonnées pixel.
+Génère une carte web (Leaflet) affichant les détections du modèle sur une
+orthomosaïque GeoTIFF, avec la position géoréférencée (lon/lat WGS84) de
+chaque déchet détecté. Contrairement à `visualize_predictions.py` (image
+chargée entièrement en mémoire), ce module lit l'orthomosaïque FENÊTRE PAR
+FENÊTRE via `rasterio` - nécessaire pour des fichiers de plusieurs centaines
+de Mo à plusieurs Go - et conserve le géoréférencement du GeoTIFF (CRS +
+transformation affine) pour convertir les détections en coordonnées réelles.
 
-Voir le journal de décisions du projet (24/08/2026, section "Géolocalisation,
-orthomosaïques et anticipation d'un changement de matériel drone") pour le
-raisonnement complet derrière ce choix d'architecture.
-
-Ce que ce module NE fait PAS (par design, comme `visualize_predictions.py`) :
-il ne modifie jamais rien dans `1_annotated_dataset`, ne produit aucun export
-CVAT - PUREMENT une visualisation, à partir des prédictions du modèle seul
-(pas de comparaison à une vérité terrain ici, contrairement à
-`visualize_predictions.py` qui, lui, appareille aux annotations existantes).
+Ce module ne modifie jamais `1_annotated_dataset` et ne produit aucun export
+CVAT - c'est une visualisation, à partir des prédictions du modèle seul (pas
+de comparaison à une vérité terrain, contrairement à
+`visualize_predictions.py`).
 
 Géométrie de tuilage : réutilise `tiling_geometry.iter_tile_windows` (même
-source de vérité que l'entraînement et que `tiled_inference.py`) et
-`tiled_inference.nms_merge` pour fusionner les doublons de recouvrement entre
-fenêtres adjacentes - aucune logique de fusion dupliquée.
+source de vérité que l'entraînement) et `tiled_inference.nms_merge` pour
+fusionner les doublons de recouvrement entre fenêtres adjacentes.
 
-Usage :
+Entrée : --tif (orthomosaïque GeoTIFF), --model (modèle entraîné, best.pt).
+Sortie : une page HTML autonome (carte Leaflet + tuiles locales de
+l'orthomosaïque) sous 7_density_maps/<run_id>/index.html par défaut.
+
+Exemple :
     python -m src.review.geo_density_map --tif "chemin/vers/orthomosaique.tif" --model chemin/vers/best.pt
 """
 
@@ -55,15 +49,13 @@ from rasterio.warp import transform as warp_transform
 from rasterio.warp import transform_bounds as warp_transform_bounds
 from shapely.geometry import Polygon
 
-from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, load_class_config
+from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
 from src.data.tiling_geometry import iter_tile_windows
 from src.review.matching import LabeledPolygon
 from src.review.tiled_inference import PredictTileFn, make_ultralytics_predict_fn, nms_merge
 
-# Même racine que les autres étapes de sortie du pipeline (5_review_dataset,
-# 6_prediction_viewer) - garder la même convention numérotée plutôt qu'un
-# chemin de sortie ad hoc, pour que ce nouvel outil s'intègre visuellement
-# au reste de l'arborescence plutôt que de faire bande à part.
+# Même racine numérotée que les autres sorties du pipeline (5_review_dataset,
+# 6_prediction_viewer).
 BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
 DENSITY_MAPS_DIR = os.path.join(BASE_DIR, "7_density_maps")
 
@@ -75,13 +67,10 @@ VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
 def _read_vendor(filename: str) -> str:
     """Lit une librairie JS/CSS tierce vendorisée dans src/review/vendor/
     (Leaflet + plugin leaflet.heat) pour l'embarquer directement dans la page
-    plutôt que de la charger depuis un CDN au chargement. Ce n'est PAS pour
-    l'auto-suffisance (la page a de toute façon besoin d'Internet pour les
-    tuiles satellite) mais pour la ROBUSTESSE : un CDN qui répond lentement,
-    est bloqué par un pare-feu d'entreprise, ou a un souci ponctuel ferait
-    échouer la carte entière (`L is not defined`) sans que rien ne l'indique
-    clairement à l'utilisateur. Vendorisées une fois ici, ces deux petites
-    librairies (~150 Ko au total) ne dépendent plus de rien d'externe."""
+    plutôt que de la charger depuis un CDN.
+
+    Entrée : nom de fichier sous src/review/vendor/.
+    Sortie : contenu du fichier (str)."""
     path = VENDOR_DIR / filename
     if not path.exists():
         raise RuntimeError(
@@ -180,20 +169,13 @@ def build_detection_crops(
 ) -> List[str]:
     """Découpe, pour CHAQUE détection, un petit chip à résolution NATIVE
     (marge autour du masque, jamais sous-échantillonné) avec le contour du
-    masque dessiné dessus, encodé en PNG base64 - c'est ce qui s'affiche dans
-    le popup au clic sur une détection, pour juger si le masque colle
-    vraiment à la forme du déchet réel.
+    masque dessiné dessus, encodé en JPEG base64 - c'est ce qui s'affiche
+    dans le popup au clic sur une détection, pour juger si le masque colle
+    vraiment à la forme du déchet réel. Coûte proportionnellement au nombre
+    de détections, pas à la surface totale de l'orthomosaïque.
 
-    Choix retenu le 24/08/2026 (voir journal de décisions) à la place d'une
-    pyramide de tuiles couvrant TOUTE l'orthomosaïque à résolution native :
-    une telle pyramide (testée, voir `generate_tile_pyramid`) pèse plusieurs
-    centaines de Mo sur ce fichier de test - largement au-delà de ce qui peut
-    être livré via une pièce jointe de conversation ou le pont vers le disque
-    de l'utilisateur (limites de taille de ces deux canaux). Un chip par
-    détection coûte, lui, proportionnellement au nombre de détections et non
-    à la surface totale de la plage - largement suffisant pour l'objectif
-    "juger la qualité d'un masque", qui ne demande la résolution native QUE
-    localement, autour de chaque déchet.
+    Entrée : chemin du GeoTIFF, liste de détections (LabeledPolygon).
+    Sortie : liste de chips encodés en data URI JPEG base64.
     """
     from PIL import Image, ImageDraw
 
@@ -217,32 +199,22 @@ def build_detection_crops(
             arr = np.transpose(data, (1, 2, 0))
             img = Image.fromarray(np.ascontiguousarray(arr), mode="RGB")
 
-            # Contour du masque en coordonnées LOCALES au chip (translation
-            # simple depuis les coordonnées pixel image entière) - jaune vif
-            # choisi pour rester lisible sur du sable comme sur du plastique
-            # coloré, plutôt que d'essayer de faire correspondre la couleur
-            # par classe assignée dynamiquement côté JS.
+            # Contour du masque en coordonnées locales au chip (jaune vif,
+            # lisible sur sable comme sur plastique coloré).
             draw = ImageDraw.Draw(img)
             local_coords = [(x - x0, y - y0) for x, y in det.geom.exterior.coords]
             if len(local_coords) >= 2:
                 draw.line(local_coords, fill=outline_color, width=2, joint="curve")
 
-            # Agrandissement pour l'affichage (le chip natif est souvent tout
-            # petit - un déchet de 10 cm à 0.5 cm/px + marge ne fait que
-            # quelques dizaines de pixels de côté) - LANCZOS car c'est pour
-            # l'œil humain, pas une entrée modèle.
+            # Agrandissement (LANCZOS) pour l'affichage si le chip natif est petit.
             scale = target_dim / max(img.width, img.height)
             if scale > 1.0:
                 img = img.resize(
                     (max(1, int(img.width * scale)), max(1, int(img.height * scale))), Image.LANCZOS
                 )
 
-            # JPEG plutôt que PNG : ce chip est une PHOTO (pas un graphique à
-            # aplats de couleur comme les tuiles de fond), le gain de
-            # compression est énorme (~5x mesuré) pour une perte de qualité
-            # invisible à l'usage - déterminant ici car ce chip est répété
-            # une fois par détection (jusqu'à plusieurs centaines) et
-            # embarqué directement dans le HTML.
+            # JPEG plutôt que PNG : chip photographique, meilleure
+            # compression pour une perte de qualité invisible à l'usage.
             img = img.convert("RGB")
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=85, optimize=True)
@@ -256,23 +228,16 @@ _EARTH_CIRCUMFERENCE_M = 2 * math.pi * 6378137.0  # ≈ 40 075 016,686 m (rayon 
 
 
 def _native_zoom_for_resolution(res_m: float, cap: int = 21) -> int:
-    """Zoom de la grille slippy-map standard (celle d'OSM/Leaflet/Esri, en
-    EPSG:3857) correspondant à la résolution native de l'orthomosaïque -
-    au-delà, une tuile serait plus fine que ce que la source contient
-    vraiment, donc pur flou d'interpolation. `res_m` = taille de pixel en
-    mètres, dans la même unité que la grille (Web Mercator).
+    """Zoom de la grille slippy-map standard (OSM/Leaflet/Esri, EPSG:3857)
+    correspondant à la résolution native de l'orthomosaïque - au-delà, une
+    tuile serait plus fine que ce que la source contient vraiment.
 
-    `cap` borne délibérément le zoom généré pour LA CARTE DE FOND (pas pour
-    l'inspection détaillée d'un masque - voir `build_detection_crops`) : une
-    pyramide couvrant toute l'orthomosaïque jusqu'au zoom vraiment natif
-    (25 sur ce fichier de test) pèse plusieurs centaines de Mo, bien au-delà
-    de ce qu'une pièce jointe de conversation ou le pont vers le disque de
-    l'utilisateur peuvent transporter (essayé puis abandonné le 24/08/2026,
-    voir le journal de décisions). Le défaut 21 donne une vue d'ensemble
-    nette pour naviguer sur la plage (~1.9 cm à 3.8 cm/px selon la latitude)
-    à un coût de génération négligeable ; le jugement fin "ce masque colle-t-
-    il au déchet ?" passe par le chip natif affiché au clic sur la
-    détection."""
+    `cap` borne volontairement le zoom généré pour la carte de fond (vue
+    d'ensemble, pas l'inspection fine d'un masque - voir
+    `build_detection_crops` pour ça).
+
+    Entrée : `res_m` (taille de pixel en mètres), `cap` (zoom max, défaut 21).
+    Sortie : niveau de zoom entier."""
     if res_m <= 0:
         return cap
     z = math.log2(_EARTH_CIRCUMFERENCE_M / (256 * res_m))
@@ -301,36 +266,22 @@ def generate_tile_pyramid(
     max_zoom_cap: int = 21,
 ) -> Dict:
     """Génère une PYRAMIDE DE TUILES XYZ (grille standard EPSG:3857) à partir
-    du GeoTIFF, pour remplacer l'ancien `build_basemap_overlay` (une unique
-    image sous-échantillonnée draper sur la carte via `L.imageOverlay`) comme
-    fond de carte pour la NAVIGATION D'ENSEMBLE sur la plage.
+    du GeoTIFF, comme fond de carte pour la navigation d'ensemble sur la
+    plage - reste nette à chaque niveau de zoom (le navigateur ne charge que
+    les tuiles visibles), contrairement à une unique image sous-échantillonnée.
 
-    Pourquoi une pyramide plutôt qu'une image unique : un `imageOverlay` est
-    figé à sa résolution d'export - zoomer au-delà ne révèle plus aucun
-    détail réel, juste l'agrandissement flou de pixels déjà là. Une pyramide
-    de tuiles reste nette à chaque niveau de zoom qu'elle couvre (le
-    navigateur ne charge que les tuiles visibles, à la résolution du niveau
-    courant), exactement comme n'importe quel outil web-GIS.
-
-    Important - ce que cette fonction NE fait PLUS depuis le 24/08/2026 (voir
-    journal de décisions) : couvrir toute l'orthomosaïque jusqu'à la
-    résolution VRAIMENT native (0.5 cm/px, zoom ≈25 sur ce fichier). Essayé,
-    ça pèse plusieurs centaines de Mo - bien au-delà de ce qu'une pièce
-    jointe de conversation ou le pont vers le disque de l'utilisateur peuvent
-    transporter. `max_zoom_cap` (défaut 21) borne donc volontairement la
-    pyramide à un niveau "vue d'ensemble nette", suffisant pour naviguer sur
-    la plage ; le jugement fin de la qualité d'un masque sur UN déchet précis
-    passe par le chip natif de `build_detection_crops`, affiché au clic sur
-    la détection - bien moins coûteux car proportionnel au nombre de
-    détections, pas à la surface totale de l'image.
+    `max_zoom_cap` (défaut 21) borne volontairement la pyramide à une vue
+    d'ensemble nette plutôt que la résolution vraiment native de
+    l'orthomosaïque ; le jugement fin de la qualité d'un masque passe par le
+    chip natif de `build_detection_crops`, affiché au clic sur la détection.
 
     Chaque tuile est reprojetée directement depuis le GeoTIFF source (une
-    bande à la fois, via `rasterio.warp.reproject`) vers la grille EPSG:3857 -
-    rasterio ne lit que la fenêtre source nécessaire à cette tuile, jamais
-    l'image entière. Cette lecture-fenêtre-par-fenêtre reste la seule
-    approche praticable sur `SL W1.tif` (~1 Go), quel que soit le zoom max
-    choisi. Écrit les PNG sous `tiles_dir/{z}/{x}/{y}.png`.
-    """
+    bande à la fois, `rasterio.warp.reproject`) - rasterio ne lit que la
+    fenêtre source nécessaire à chaque tuile, jamais l'image entière.
+
+    Entrée : chemin du GeoTIFF, dossier de sortie, taille de tuile en px.
+    Sortie : dict (min_zoom, max_zoom, n_tiles, bornes sw/ne) ; écrit les PNG
+    sous `tiles_dir/{z}/{x}/{y}.png`."""
     from PIL import Image
     from rasterio.warp import reproject
 
@@ -407,33 +358,22 @@ def _build_html(
     source_name: str,
     model_name: str,
 ) -> str:
-    """Page autonome (Leaflet + plugin leaflet.heat vendorisés, voir
-    `_read_vendor`). Volontairement PAS publiée comme Artifact claude.ai : un
-    Artifact interdit toute requête réseau externe hors polices Google (CSP
-    stricte), ce qui bloquerait le fond de carte satellite ET les tuiles de
-    l'orthomosaïque - cette page est prévue pour être ouverte directement
-    dans un navigateur normal, sans cette contrainte.
+    """Construit la page HTML autonome (Leaflet + plugin leaflet.heat
+    vendorisés, voir `_read_vendor`) à ouvrir directement dans un navigateur -
+    volontairement pas publiée comme Artifact claude.ai, dont la CSP
+    bloquerait le fond de carte satellite et les tuiles de l'orthomosaïque.
 
     Le fond orthomosaïque est un `L.tileLayer` pointant vers le dossier local
-    `tiles/{z}/{x}/{y}.png` (chemin RELATIF à ce fichier HTML - les deux
-    doivent rester ensemble) plutôt qu'un `L.imageOverlay` unique : voir
-    `generate_tile_pyramid` pour le raisonnement complet (zoom jusqu'au pixel
-    natif pour juger la qualité d'un masque). `minNativeZoom`/`maxNativeZoom`
-    indiquent à Leaflet de ne jamais demander de tuile hors de la pyramide
-    générée - en dehors de cette plage, il agrandit/réduit la tuile la plus
-    proche disponible plutôt que de laisser un trou.
+    `tiles/{z}/{x}/{y}.png` (chemin relatif à ce fichier HTML - les deux
+    doivent rester ensemble). Chaque détection est dessinée comme un vrai
+    polygone (`d.polygon`, le contour du masque reprojeté en lon/lat) avec un
+    petit point centré en complément pour rester cliquable à faible zoom ; le
+    jugement fin de la qualité du masque se fait dans le popup au clic, via
+    le chip natif `d.crop` (voir `build_detection_crops`).
 
-    Chaque détection est dessinée comme un VRAI polygone (`d.polygon`, le
-    contour du masque de segmentation reprojeté en lon/lat) et non plus comme
-    un simple point - situe la FORME et la POSITION du masque sur la carte
-    d'ensemble. Un petit point centré est ajouté en complément : à faible
-    zoom un masque de quelques cm devient un polygone de quelques pixels
-    écran, quasi impossible à cliquer sans lui. Le JUGEMENT FIN de la
-    qualité du masque (colle-t-il vraiment au déchet ?) se fait dans le
-    popup au clic, via le chip natif `d.crop` (voir `build_detection_crops`) -
-    pas en zoomant la carte elle-même, plafonnée à un niveau de vue
-    d'ensemble (voir `generate_tile_pyramid`).
-    """
+    Entrée : bornes de zoom et géographiques de la pyramide de tuiles,
+    détections (dicts JSON-sérialisables), nom de la source et du modèle.
+    Sortie : contenu HTML de la page (str)."""
     detections_json = json.dumps(detections, ensure_ascii=False)
     center_lat = (sw[1] + ne[1]) / 2
     center_lon = (sw[0] + ne[0]) / 2
@@ -641,6 +581,12 @@ def run_geo_density_map(
     print(f"    Modèle        : {model_path}")
 
     predict_tile_fn = make_ultralytics_predict_fn(model_path, conf_threshold=tile_conf_threshold)
+
+    # Garde-fou : voir la même vérification dans label_review.py. Absent pour un
+    # predict_tile_fn injecté en test (pas d'attribut model_names).
+    model_names = getattr(predict_tile_fn, "model_names", None)
+    if model_names is not None:
+        assert_model_matches_taxonomy(model_names, target_names, model_label=str(model_path))
 
     detections, crs, transform, (img_w, img_h) = predict_geotiff_windowed(
         tif_path, predict_tile_fn, tile_size=tile_size, overlap=overlap, nms_iou_threshold=nms_iou_threshold

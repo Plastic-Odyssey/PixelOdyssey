@@ -1,0 +1,541 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+PixelOdyssey - Diagnostic complet du dataset annoté, export .xlsx multi-feuilles.
+
+Objectif : donner une vue EXHAUSTIVE, au niveau de chaque DÉCHET ANNOTÉ
+individuel (un "item" = une instance/masque, pas une image), avec toutes les
+métadonnées disponibles (lot/collecte d'origine, image d'origine, split
+train/val/test si déjà connu, classe brute + super-classe résolue, taille/
+forme, géolocalisation quand elle existe) - puis des feuilles agrégées
+(moyennes/médianes) par super-classe et par collecte.
+
+Complète, sans le remplacer, `dataset_audit.py` : celui-ci reste l'outil de
+référence pour la conception de la taxonomie (indépendant de
+class_taxonomy, classes BRUTES uniquement, CSV simple). Ce module-ci
+suppose une taxonomie déjà stable, résout chaque instance vers sa
+super-classe cible, et vise l'export/le partage (xlsx, plusieurs feuilles)
+plutôt que l'exploration en console.
+
+Périmètre volontaire : lit `1_annotated_dataset` (le dataset SOURCE, une
+ligne par instance réellement annotée), jamais `4_sliced_dataset` (les
+imagettes tuilées, qui dupliquent chaque instance sur chaque tuile qui la
+recouvre - compter les items là-bas fausserait tous les totaux et toutes
+les moyennes). Même choix que `dataset_audit.py`, voir sa docstring.
+
+Géolocalisation : tentée pour CHAQUE image parente via rasterio (fonctionne
+pour un GeoTIFF avec CRS embarqué - ex. les lots "SL ..." ; échoue
+silencieusement et proprement pour une image sans géoréférencement - ex.
+les lots "SB ..." dont les images sont déjà des fragments JPG pré-tuilés
+SANS CRS, ce qui est un état de fait du dataset, pas un bug de ce script).
+Quand la géoréférencement existe, un estimé de surface réelle (m²) est
+calculé à partir de la résolution sol RÉELLE du GeoTIFF (GSD mesurée, pas
+supposée) - comparable aux mesures manuelles de
+`guide_mesure_surface_bache_qgis.md`, mais à lire comme une estimation
+(empreinte 2D vue du dessus, pas un volume).
+
+Aire en pixels + estimation cm² à GSD FIXE (demande du 02/09/2026) : en plus
+de `aire_m2_estimee` (GSD réelle, seulement dispo si géoréférencé), chaque
+item porte aussi `aire_px` (aire brute du masque en pixels², toujours
+disponible) et `aire_cm2_estimee_gsd_fixe` (aire_px × gsd_fixe_cm_px², avec
+`--gsd-fixe-cm-px` par défaut 0.6 cm/px) - calculée pour TOUS les items, y
+compris les lots non géoréférencés (SB...), puisqu'elle ne dépend d'aucun
+CRS. Point de vigilance à garder en tête : c'est une HYPOTHÈSE UNIQUE
+appliquée à tout le dataset, alors que la GSD réelle peut varier d'un lot à
+l'autre (altitude de vol, appareil - la mesure du 24/08/2026 donnait ≈0,5
+cm/px sur une orthomosaïque SL réelle, contre 0,6 cm/px demandé ici) : utile
+pour comparer vite tous les items sur une base commune, mais `aire_m2_estimee`
+(GSD mesurée) reste la référence à privilégier pour les lots qui l'ont.
+
+Split train/val/test : ajouté par item SI `2_split_dataset/.parent_manifest.json`
+existe déjà (généré par split_dataset.py / data_pipeline.py) - sinon la
+colonne l'indique explicitement plutôt que de l'omettre en silence.
+
+Entrée : --raw-dir (dataset annoté brut, défaut 1_annotated_dataset),
+--split-dir (pour le manifeste de split, optionnel), --output (.xlsx).
+Sortie : un classeur .xlsx avec les feuilles :
+  - Résumé            : totaux et taux de couverture (geoloc, split...)
+  - Items              : une ligne par instance annotée, TOUTES les colonnes
+  - Par super-classe    : agrégats/moyennes sur la taxonomie cible (7 classes)
+  - Par collecte        : agrégats/moyennes par lot (dossier de 1er niveau)
+  - Par classe brute     : granularité fine, pour recoupement avec dataset_audit.py
+
+Exemple :
+    python -m src.data.dataset_diagnostic
+    python -m src.data.dataset_diagnostic --raw-dir "1_annotated_dataset" --output diag.xlsx
+    python -m src.data.dataset_diagnostic --skip-geo   # plus rapide, sans tentative de géoloc
+    python -m src.data.dataset_diagnostic --gsd-fixe-cm-px 0.5   # autre hypothèse de GSD fixe
+"""
+
+import argparse
+import json
+import os
+import statistics
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+import pandas as pd
+from shapely.geometry import Polygon
+
+from src.data.class_config import (
+    DEFAULT_CLASS_CONFIG_PATH,
+    EXCLUDE,
+    load_batch_local_names,
+    load_class_config,
+    normalize_class_name,
+    resolve_class_name,
+)
+from src.data.raw_dataset import collect_parent_images
+
+RAW_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset"
+OUTPUT_XLSX_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\dataset_diagnostic.xlsx"
+SPLIT_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\2_split_dataset"
+PARENT_MANIFEST_FILENAME = ".parent_manifest.json"  # même nom que split_dataset.py
+GSD_FIXE_CM_PAR_PX_DEFAULT = 0.6  # hypothèse unique, voir docstring du module
+
+WEBMERCATOR = "EPSG:3857"
+
+# Mêmes divergences d'orthographe que dataset_audit.py (voir sa docstring) -
+# n'affecte QUE la feuille "Par classe brute" (granularité fine), jamais la
+# résolution vers la super-classe (qui passe par class_taxonomy/class_aliases,
+# seule source de vérité pour ça).
+RAW_ALIASES: Dict[str, str] = {
+    "flipflops": "fliflops",
+    "bouteilles pet": "bouteille pet",
+    "bouteilles plastique rigide": "bouteille plastique rigide",
+}
+
+
+def _raw_canonical_key(raw_name: str) -> str:
+    key = normalize_class_name(raw_name)
+    return RAW_ALIASES.get(key, key)
+
+
+def _cv(values: List[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = statistics.mean(values)
+    if mean == 0:
+        return 0.0
+    return statistics.stdev(values) / mean
+
+
+def _load_parent_manifest(split_dir: str) -> Dict[str, Dict]:
+    """Retourne {} si le manifeste n'existe pas encore (pipeline pas lancé) -
+    jamais bloquant, juste une colonne 'split' marquée indisponible."""
+    manifest_path = Path(split_dir) / PARENT_MANIFEST_FILENAME
+    if not manifest_path.exists():
+        return {}
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _geo_info_for_image(img_path: Path, skip_geo: bool = False) -> Dict:
+    """Tente d'ouvrir `img_path` avec rasterio pour en tirer les dimensions ET,
+    quand elles existent (et que `skip_geo` n'a pas été demandé), le
+    géoréférencement (CRS + transformation affine) et la résolution sol (GSD,
+    en mètres/pixel - via reprojection EPSG:3857, fonctionne quel que soit le
+    CRS source, projeté ou géographique - même logique que
+    `geo_density_map.generate_tile_pyramid`).
+
+    N'ouvre JAMAIS l'image en pixels (métadonnées seules) - coût négligeable
+    même sur une orthomosaïque de plusieurs centaines de Mo. `skip_geo=True`
+    lit quand même les dimensions (toujours nécessaires pour dénormaliser les
+    polygones) - seul le calcul de géoréférencement/GSD est court-circuité,
+    plus coûteux (reprojection) que la simple ouverture des métadonnées.
+
+    Retourne toujours : width, height (int, ou None si le fichier est
+    illisible - SEUL cas où l'appelant doit ignorer ce parent). Si
+    géoréférencé et `skip_geo=False` : + has_geo=True, crs (str), transform
+    (objet rasterio), gsd_m (float). Sinon : has_geo=False.
+    """
+    import rasterio
+    from rasterio.warp import calculate_default_transform
+
+    try:
+        with rasterio.open(str(img_path)) as src:
+            width, height = src.width, src.height
+            if skip_geo or src.crs is None:
+                return {"width": width, "height": height, "has_geo": False}
+            try:
+                dst_transform, _, _ = calculate_default_transform(
+                    src.crs, WEBMERCATOR, width, height, *src.bounds
+                )
+                gsd_m = abs(dst_transform.a)
+            except Exception:
+                gsd_m = None
+            return {
+                "width": width,
+                "height": height,
+                "has_geo": True,
+                "crs": str(src.crs),
+                "transform": src.transform,
+                "gsd_m": gsd_m,
+            }
+    except Exception:
+        # Fichier illisible par rasterio (rare vu VALID_IMG_EXTS) - signalé à
+        # l'appelant via width/height=None plutôt qu'un plantage du diagnostic entier.
+        return {"width": None, "height": None, "has_geo": False}
+
+
+def _centroids_to_lonlat(centroids_px: List[Tuple[float, float]], transform, crs) -> List[Tuple[float, float]]:
+    """Même logique que geo_density_map.pixels_to_lonlat, réimportée directement
+    depuis src.review.geo_density_map pour ne jamais dupliquer cette conversion -
+    voir l'import plus bas dans build_items()."""
+    from src.review.geo_density_map import pixels_to_lonlat
+
+    return pixels_to_lonlat(centroids_px, transform, crs)
+
+
+def build_items(
+    raw_dir: str,
+    split_dir: str,
+    skip_geo: bool = False,
+    gsd_fixe_cm_px: float = GSD_FIXE_CM_PAR_PX_DEFAULT,
+) -> Tuple[List[Dict], Dict]:
+    """Parcourt `raw_dir` et construit une liste de dicts, un par instance
+    annotée (item). Retourne aussi un dict de compteurs de diagnostic (lignes
+    ignorées, classes non résolues...) à afficher/consigner séparément.
+    """
+    taxonomy, target_names = load_class_config(DEFAULT_CLASS_CONFIG_PATH)
+    parent_manifest = _load_parent_manifest(split_dir)
+
+    all_parents = collect_parent_images(Path(raw_dir))
+    unique_parents = list({p["parent_id"]: p for p in all_parents}.values())
+    batches_seen = sorted({p["batch"] for p in unique_parents})
+    print(f"--- 🔎 DIAGNOSTIC DATASET ({len(unique_parents)} image(s) parente(s), "
+          f"{len(batches_seen)} collecte(s) : {', '.join(batches_seen)}) ---")
+    if not parent_manifest:
+        print("  ℹ️  Pas de manifeste de split trouvé (2_split_dataset/.parent_manifest.json) - "
+              "colonne 'split' marquée 'indisponible' pour tous les items. Lance data_pipeline.py "
+              "si tu veux aussi voir la répartition train/val/test.")
+
+    local_names_by_batch: Dict[str, Dict[int, str]] = {}
+    items: List[Dict] = []
+    counters = {
+        "n_parents": len(unique_parents),
+        "n_parents_illisibles": 0,
+        "n_parents_sans_dataYaml": 0,
+        "n_lignes_ignorees_classe_locale_introuvable": 0,
+        "n_instances_non_resolues": 0,
+        "n_instances_exclues": 0,
+        "n_parents_georeferences": 0,
+        "n_instances_avec_geoloc": 0,
+    }
+    unresolved_names_seen: set = set()
+
+    item_id = 0
+    for item in unique_parents:
+        batch_name = item["batch"]
+        img_path = Path(item["img_path"])
+        label_path = Path(item["label_path"])
+        parent_id = item["parent_id"]
+
+        if batch_name not in local_names_by_batch:
+            local_yaml = Path(raw_dir) / batch_name / "data.yaml"
+            if not local_yaml.exists():
+                print(f"  ⚠️  [{batch_name}] pas de data.yaml local - lot ignoré.")
+                local_names_by_batch[batch_name] = {}
+                counters["n_parents_sans_dataYaml"] += 1
+            else:
+                local_names_by_batch[batch_name] = load_batch_local_names(local_yaml)
+        local_names = local_names_by_batch[batch_name]
+        if not local_names:
+            continue
+
+        geo = _geo_info_for_image(img_path, skip_geo=skip_geo)
+        if geo.get("width") is None:
+            counters["n_parents_illisibles"] += 1
+            continue
+        img_w, img_h = geo["width"], geo["height"]
+        img_area = img_w * img_h
+        has_geo = geo.get("has_geo", False)
+        if has_geo:
+            counters["n_parents_georeferences"] += 1
+
+        split_info = parent_manifest.get(parent_id)
+        split_value = split_info["split"] if split_info else "indisponible"
+
+        if not label_path.exists():
+            continue  # image "background" (aucun déchet annoté) - pas un item, rien à lister ici
+
+        with open(label_path, "r", encoding="utf-8") as f:
+            lines = [line for line in f if line.strip()]
+
+        # Centroïdes calculés d'abord pour TOUTES les instances valides de CE
+        # parent, converti en lon/lat en un seul appel groupé (comme
+        # geo_density_map) plutôt qu'un appel rasterio.warp par instance.
+        parsed_instances = []
+        for line_no, line in enumerate(lines, start=1):
+            parts = line.strip().split()
+            if not parts:
+                continue
+            local_id = int(parts[0])
+            raw_name = local_names.get(local_id)
+            if raw_name is None:
+                counters["n_lignes_ignorees_classe_locale_introuvable"] += 1
+                continue
+
+            coords = [float(x) for x in parts[1:]]
+            pixels = [(coords[i] * img_w, coords[i + 1] * img_h) for i in range(0, len(coords), 2)]
+            if len(pixels) < 3:
+                continue
+            geom = Polygon(pixels)
+            if not geom.is_valid or geom.area <= 0:
+                continue
+            parsed_instances.append((line_no, raw_name, geom))
+
+        centroids_px = [(g.centroid.x, g.centroid.y) for _, _, g in parsed_instances]
+        lonlat = []
+        if has_geo and centroids_px:
+            try:
+                lonlat = _centroids_to_lonlat(centroids_px, geo["transform"], geo["crs"])
+            except Exception:
+                lonlat = []
+
+        for idx, (line_no, raw_name, geom) in enumerate(parsed_instances):
+            minx, miny, maxx, maxy = geom.bounds
+            bbox_w, bbox_h = maxx - minx, maxy - miny
+            if bbox_h <= 0:
+                continue
+
+            resolved = resolve_class_name(raw_name, taxonomy)
+            if resolved is None:
+                super_classe = "⚠ NON RÉSOLU"
+                super_classe_id = None
+                counters["n_instances_non_resolues"] += 1
+                unresolved_names_seen.add(raw_name)
+            elif resolved == EXCLUDE:
+                super_classe = "EXCLUDE (jamais utilisée à l'entraînement)"
+                super_classe_id = None
+                counters["n_instances_exclues"] += 1
+            else:
+                super_classe = target_names.get(resolved, f"classe_{resolved}")
+                super_classe_id = resolved
+
+            lon = lat = None
+            aire_m2_estimee = None
+            if has_geo and idx < len(lonlat):
+                lon, lat = lonlat[idx]
+                if geo.get("gsd_m"):
+                    aire_m2_estimee = round(geom.area * (geo["gsd_m"] ** 2), 4)
+                counters["n_instances_avec_geoloc"] += 1
+
+            # Aire brute en pixels² - toujours disponible (pas besoin de géoréférencement),
+            # sert de base à aire_cm2_estimee_gsd_fixe ci-dessous. `geom.area` est déjà en
+            # pixels² à ce stade (polygone dénormalisé via img_w/img_h plus haut).
+            aire_px = round(geom.area, 2)
+            aire_cm2_estimee_gsd_fixe = round(aire_px * (gsd_fixe_cm_px ** 2), 4)
+
+            item_id += 1
+            items.append({
+                "item_id": item_id,
+                "collecte": batch_name,
+                "image_origine": img_path.name,
+                "chemin_image_complet": str(img_path),
+                "parent_id": parent_id,
+                "split": split_value,
+                "label_path": str(label_path),
+                "ligne_label": line_no,
+                "classe_brute": raw_name,
+                "super_classe": super_classe,
+                "super_classe_id": super_classe_id,
+                "image_largeur_px": img_w,
+                "image_hauteur_px": img_h,
+                "aire_px": aire_px,
+                "aire_pct_image": round(100.0 * geom.area / img_area, 4),
+                "largeur_pct_image": round(100.0 * bbox_w / img_w, 4),
+                "hauteur_pct_image": round(100.0 * bbox_h / img_h, 4),
+                "ratio_largeur_hauteur": round(bbox_w / bbox_h, 3),
+                "aire_cm2_estimee_gsd_fixe": aire_cm2_estimee_gsd_fixe,
+                "geoloc_disponible": "Oui" if (has_geo and lon is not None) else "Non",
+                "crs_source": geo.get("crs") if has_geo else None,
+                "longitude": lon,
+                "latitude": lat,
+                "gsd_m_par_px_reelle": round(geo["gsd_m"], 4) if (has_geo and geo.get("gsd_m")) else None,
+                "aire_m2_estimee": aire_m2_estimee,
+            })
+
+    if unresolved_names_seen:
+        print(f"  ⚠️  {counters['n_instances_non_resolues']} instance(s) avec une classe brute NON "
+              f"résolue par la taxonomie actuelle : {sorted(unresolved_names_seen)}. Normalement déjà "
+              f"bloqué en amont par raw_dataset_checker.py - à vérifier si ce diagnostic tourne sur un "
+              f"dataset non passé par ce garde-fou (ex: 1bis_corrected_annotation pas encore vérifié).")
+
+    return items, counters
+
+
+def _write_summary_sheet(
+    writer, items: List[Dict], counters: Dict, raw_dir: str, gsd_fixe_cm_px: float
+) -> None:
+    from datetime import datetime
+
+    n_geo = counters["n_instances_avec_geoloc"]
+    n_total = len(items)
+    pct_geo = round(100.0 * n_geo / n_total, 1) if n_total else 0.0
+    n_split_ok = sum(1 for it in items if it["split"] != "indisponible")
+    pct_split = round(100.0 * n_split_ok / n_total, 1) if n_total else 0.0
+
+    rows = [
+        ("Généré le", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("Dataset source", raw_dir),
+        ("GSD fixe utilisée pour aire_cm2_estimee_gsd_fixe (HYPOTHÈSE, pas mesurée)",
+         f"{gsd_fixe_cm_px} cm/px - voir --gsd-fixe-cm-px"),
+        ("Nombre d'images parentes", counters["n_parents"]),
+        ("  dont géoréférencées (GeoTIFF avec CRS)", counters["n_parents_georeferences"]),
+        ("  dont illisibles", counters["n_parents_illisibles"]),
+        ("  dont sans data.yaml local", counters["n_parents_sans_dataYaml"]),
+        ("Nombre total d'items (instances annotées)", n_total),
+        ("  dont géolocalisées", f"{n_geo} ({pct_geo}%)"),
+        ("  dont avec split train/val/test connu", f"{n_split_ok} ({pct_split}%)"),
+        ("  dont exclues de l'entraînement (EXCLUDE)", counters["n_instances_exclues"]),
+        ("  dont classe brute NON résolue (⚠ à vérifier)", counters["n_instances_non_resolues"]),
+        ("Lignes de label ignorées (classe locale introuvable)",
+         counters["n_lignes_ignorees_classe_locale_introuvable"]),
+    ]
+    df = pd.DataFrame(rows, columns=["Indicateur", "Valeur"])
+    df.to_excel(writer, sheet_name="Résumé", index=False)
+
+
+def _write_per_class_sheet(writer, df_items: pd.DataFrame) -> None:
+    if df_items.empty:
+        return
+    rows = []
+    for super_classe, g in df_items.groupby("super_classe"):
+        geo_g = g[g["geoloc_disponible"] == "Oui"]
+        rows.append({
+            "super_classe": super_classe,
+            "n_instances": len(g),
+            "n_images": g["chemin_image_complet"].nunique(),
+            "n_collectes": g["collecte"].nunique(),
+            "collectes": ", ".join(f"{b}({n})" for b, n in g["collecte"].value_counts().items()),
+            "aire_px_mediane": round(g["aire_px"].median(), 2),
+            "aire_px_moyenne": round(g["aire_px"].mean(), 2),
+            "aire_pct_image_mediane": round(g["aire_pct_image"].median(), 4),
+            "aire_pct_image_moyenne": round(g["aire_pct_image"].mean(), 4),
+            "cv_aire": round(_cv(g["aire_pct_image"].tolist()), 3),
+            "ratio_lxh_median": round(g["ratio_largeur_hauteur"].median(), 3),
+            "cv_ratio_lxh": round(_cv(g["ratio_largeur_hauteur"].tolist()), 3),
+            "aire_cm2_estimee_gsd_fixe_moyenne": round(g["aire_cm2_estimee_gsd_fixe"].mean(), 2),
+            "n_instances_georeferencees": len(geo_g),
+            "aire_m2_estimee_moyenne": round(geo_g["aire_m2_estimee"].mean(), 4) if len(geo_g) else None,
+        })
+    out = pd.DataFrame(rows).sort_values("n_instances", ascending=False)
+    out.to_excel(writer, sheet_name="Par super-classe", index=False)
+
+
+def _write_per_batch_sheet(writer, df_items: pd.DataFrame) -> None:
+    if df_items.empty:
+        return
+    rows = []
+    for collecte, g in df_items.groupby("collecte"):
+        geo_g = g[g["geoloc_disponible"] == "Oui"]
+        row = {
+            "collecte": collecte,
+            "n_instances": len(g),
+            "n_images": g["chemin_image_complet"].nunique(),
+            "n_super_classes_presentes": g["super_classe"].nunique(),
+            "classes_presentes": ", ".join(f"{c}({n})" for c, n in g["super_classe"].value_counts().items()),
+            "aire_pct_image_moyenne": round(g["aire_pct_image"].mean(), 4),
+            "aire_cm2_estimee_gsd_fixe_moyenne": round(g["aire_cm2_estimee_gsd_fixe"].mean(), 2),
+            "aire_cm2_estimee_gsd_fixe_totale": round(g["aire_cm2_estimee_gsd_fixe"].sum(), 2),
+            "pct_instances_georeferencees": round(100.0 * len(geo_g) / len(g), 1) if len(g) else 0.0,
+        }
+        if len(geo_g):
+            row["latitude_moyenne"] = round(geo_g["latitude"].mean(), 6)
+            row["longitude_moyenne"] = round(geo_g["longitude"].mean(), 6)
+            row["latitude_min"] = round(geo_g["latitude"].min(), 6)
+            row["latitude_max"] = round(geo_g["latitude"].max(), 6)
+            row["longitude_min"] = round(geo_g["longitude"].min(), 6)
+            row["longitude_max"] = round(geo_g["longitude"].max(), 6)
+            row["aire_m2_estimee_totale"] = round(geo_g["aire_m2_estimee"].sum(), 2)
+        else:
+            row.update({k: None for k in (
+                "latitude_moyenne", "longitude_moyenne", "latitude_min", "latitude_max",
+                "longitude_min", "longitude_max", "aire_m2_estimee_totale",
+            )})
+        rows.append(row)
+    out = pd.DataFrame(rows).sort_values("n_instances", ascending=False)
+    out.to_excel(writer, sheet_name="Par collecte", index=False)
+
+
+def _write_per_raw_class_sheet(writer, df_items: pd.DataFrame) -> None:
+    if df_items.empty:
+        return
+    keys = df_items["classe_brute"].map(_raw_canonical_key)
+    df = df_items.assign(_cle_brute=keys)
+    rows = []
+    for cle, g in df.groupby("_cle_brute"):
+        display_name = g["classe_brute"].iloc[0]
+        rows.append({
+            "classe_brute": display_name,
+            "super_classe_cible": ", ".join(sorted(g["super_classe"].unique())),
+            "n_instances": len(g),
+            "n_images": g["chemin_image_complet"].nunique(),
+            "n_collectes": g["collecte"].nunique(),
+            "aire_px_mediane": round(g["aire_px"].median(), 2),
+            "aire_pct_image_mediane": round(g["aire_pct_image"].median(), 4),
+            "cv_aire": round(_cv(g["aire_pct_image"].tolist()), 3),
+            "ratio_lxh_median": round(g["ratio_largeur_hauteur"].median(), 3),
+            "cv_ratio_lxh": round(_cv(g["ratio_largeur_hauteur"].tolist()), 3),
+            "aire_cm2_estimee_gsd_fixe_moyenne": round(g["aire_cm2_estimee_gsd_fixe"].mean(), 2),
+        })
+    out = pd.DataFrame(rows).sort_values("n_instances", ascending=False)
+    out.to_excel(writer, sheet_name="Par classe brute", index=False)
+
+
+def run_diagnostic(
+    raw_dir: str = RAW_DIR_DEFAULT,
+    split_dir: str = SPLIT_DIR_DEFAULT,
+    output_xlsx: str = OUTPUT_XLSX_DEFAULT,
+    skip_geo: bool = False,
+    gsd_fixe_cm_px: float = GSD_FIXE_CM_PAR_PX_DEFAULT,
+) -> str:
+    items, counters = build_items(raw_dir, split_dir, skip_geo=skip_geo, gsd_fixe_cm_px=gsd_fixe_cm_px)
+    if not items:
+        print("❌ Aucun item trouvé - vérifie --raw-dir.")
+        return ""
+
+    df_items = pd.DataFrame(items)
+
+    output_xlsx = str(output_xlsx)
+    Path(output_xlsx).parent.mkdir(parents=True, exist_ok=True)
+    with pd.ExcelWriter(output_xlsx, engine="openpyxl") as writer:
+        _write_summary_sheet(writer, items, counters, raw_dir, gsd_fixe_cm_px)
+        df_items.to_excel(writer, sheet_name="Items", index=False)
+        _write_per_class_sheet(writer, df_items)
+        _write_per_batch_sheet(writer, df_items)
+        _write_per_raw_class_sheet(writer, df_items)
+
+    print(f"\n[SUCCÈS] {len(items)} item(s) exporté(s) : {output_xlsx}")
+    print(f"    Feuilles : Résumé, Items, Par super-classe, Par collecte, Par classe brute")
+    return output_xlsx
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Diagnostic complet du dataset PixelOdyssey (export .xlsx)")
+    parser.add_argument("--raw-dir", default=RAW_DIR_DEFAULT)
+    parser.add_argument("--split-dir", default=SPLIT_DIR_DEFAULT,
+                         help="Dossier de 2_split_dataset, pour joindre la colonne 'split' si le "
+                              "manifeste existe déjà (optionnel, non bloquant si absent).")
+    parser.add_argument("--output", default=OUTPUT_XLSX_DEFAULT)
+    parser.add_argument("--skip-geo", action="store_true",
+                         help="Ne tente aucune lecture de géoréférencement (plus rapide, colonnes "
+                              "géoloc/surface vides) - utile pour un premier passage rapide.")
+    parser.add_argument("--gsd-fixe-cm-px", type=float, default=GSD_FIXE_CM_PAR_PX_DEFAULT,
+                         help=f"Résolution sol (cm/pixel) supposée UNIFORME sur tout le dataset, "
+                              f"utilisée pour aire_cm2_estimee_gsd_fixe (défaut {GSD_FIXE_CM_PAR_PX_DEFAULT}) - "
+                              f"appliquée même aux lots non géoréférencés. Ne remplace pas "
+                              f"aire_m2_estimee (GSD réellement mesurée), qui reste plus fiable "
+                              f"quand elle est disponible.")
+    args = parser.parse_args()
+    run_diagnostic(
+        raw_dir=args.raw_dir,
+        split_dir=args.split_dir,
+        output_xlsx=args.output,
+        skip_geo=args.skip_geo,
+        gsd_fixe_cm_px=args.gsd_fixe_cm_px,
+    )

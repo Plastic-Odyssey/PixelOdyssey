@@ -42,10 +42,17 @@ def make_ultralytics_predict_fn(model_path: Union[str, Path], conf_threshold: fl
     défaut, voir label_review.py) est appliqué APRÈS la fusion inter-tuiles,
     pas ici, pour ne pas perdre une détection dont la confiance grimperait
     après fusion de deux tuiles qui la voient chacune partiellement.
+
+    La fonction retournée porte un attribut `.model_names` (dict id -> nom, tel
+    qu'embarqué dans le modèle au moment de son entraînement) - à vérifier contre
+    la taxonomie ACTUELLE avant d'utiliser les class_id prédits pour quoi que ce
+    soit (voir `class_config.assert_model_matches_taxonomy`) : un modèle plus
+    ancien peut avoir été entraîné avec des ID de classe différents.
     """
     from ultralytics import YOLO
 
     model = YOLO(str(model_path))
+    model_names = {int(k): str(v) for k, v in model.names.items()}
 
     def predict_tile(tile_img: np.ndarray) -> List[TilePrediction]:
         results = model.predict(tile_img, conf=conf_threshold, verbose=False)
@@ -64,6 +71,7 @@ def make_ultralytics_predict_fn(model_path: Union[str, Path], conf_threshold: fl
             out.append((int(cls), float(conf), [(float(x), float(y)) for x, y in poly_xy]))
         return out
 
+    predict_tile.model_names = model_names
     return predict_tile
 
 
@@ -74,8 +82,8 @@ def nms_merge(predictions: List[LabeledPolygon], iou_threshold: float = 0.5) -> 
     deux fois - on garde seulement celle de plus haute confiance.
 
     Public (pas de `_`) : réutilisé aussi par le futur module d'inférence
-    géo-consciente sur orthomosaïque complète (src/review/geo_density_map.py,
-    24/08/2026) - la logique de fusion des recouvrements de tuiles est
+    géo-consciente sur orthomosaïque complète (src/review/geo_density_map.py) -
+    la logique de fusion des recouvrements de tuiles est
     identique, que l'image source soit chargée entièrement en mémoire
     (predict_parent_image ci-dessous) ou lue fenêtre par fenêtre via rasterio
     pour une orthomosaïque trop grande pour tenir en RAM.

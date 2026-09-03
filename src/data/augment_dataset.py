@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PixelOdyssey - Étape 3 : Augmentation (PLACEHOLDER - pas encore implémentée).
+PixelOdyssey - Étape 3 : Augmentation.
 
 Lit `2_split_dataset/{images,labels}/{train,val,test}` et écrit
 `3_augmented_dataset/{images,labels}/{train,val,test}`.
 
-RÈGLE STRUCTURELLE, PAS UNE SIMPLE CONVENTION :
-------------------------------------------------
 val/ et test/ sont TOUJOURS copiés tels quels (`_passthrough_split`), sans jamais
 passer par la fonction d'augmentation. Seul train/ passe par `_augment_train_split`.
 C'est délibérément deux fonctions distinctes plutôt qu'un paramètre optionnel sur
@@ -21,23 +19,17 @@ créent des images DÉRIVÉES d'images existantes. Si l'une de ces variantes fin
 en val ou en test, le modèle aurait "vu" une quasi-copie de ce qu'il est censé être
 évalué sur - fuite de données. D'où le split (étape 2) avant l'augmentation (ici).
 
-TODO (à discuter avant implémentation - cf. conversation projet) :
-- Augmentation de contraste / couleur - vérifier d'abord si ça n'est pas déjà
-  couvert par les augmentations à la volée d'Ultralytics pendant l'entraînement
-  (hsv_h/hsv_s/hsv_v sont déjà actifs dans les args de train.py) avant de dupliquer
-  cet effort en pré-calculant des variantes sur disque.
-- Copy-paste de masques de déchets extraits - Ultralytics a un paramètre
-  `copy_paste` natif (actuellement à 0.0 dans les args d'entraînement) : à évaluer
-  avant de construire un pipeline de copy-paste maison.
-- Dédoublement / oversampling des classes rares - probablement plus efficace après
-  le découpage en tuiles (étape 4) qu'ici : dupliquer une tuile 640x640 contenant
-  l'objet rare coûte beaucoup moins qu'dupliquer toute l'image parente. À trancher
-  une fois qu'on aura les statistiques de classes par tuile.
+Aucune technique d'augmentation n'est implémentée pour l'instant : ce script est
+un pass-through complet (train/val/test copiés à l'identique), ce qui permet à
+4_sliced_dataset d'être généré dès aujourd'hui à partir de 3_augmented_dataset,
+sans attendre que l'augmentation soit implémentée.
 
-Tant que ces décisions ne sont pas prises, ce script est un pass-through complet
-(train/val/test copiés à l'identique) : 4_sliced_dataset peut déjà être généré à
-partir de 3_augmented_dataset dès aujourd'hui, sans attendre que l'augmentation
-soit implémentée.
+Entrée : `2_split_dataset/{images,labels}/{train,val,test}`.
+Sortie : `3_augmented_dataset/{images,labels}/{train,val,test}`.
+
+Exemple :
+    python src/data/augment_dataset.py
+    python src/data/augment_dataset.py --force
 """
 
 import argparse
@@ -65,11 +57,10 @@ AUGMENTATION_RULES_VERSION = 0
 
 
 def _augment_params(split_dir: Path) -> Dict:
-    # "upstream_split_fingerprint" (24/08/2026) : propage le fingerprint de
-    # l'étape amont (split) dans le nôtre - voir la docstring de
-    # read_upstream_fingerprint() dans pipeline_utils.py pour le bug concret que
-    # ça évite (fuite train/val silencieuse si le split change de logique SANS
-    # que cette étape ait elle-même changé de paramètre).
+    # upstream_split_fingerprint : propage le fingerprint de l'étape amont (split)
+    # dans le nôtre, pour détecter un changement de logique du split même si cette
+    # étape n'a elle-même changé aucun paramètre (voir read_upstream_fingerprint()
+    # dans pipeline_utils.py).
     return {
         "augmentation_rules_version": AUGMENTATION_RULES_VERSION,
         "upstream_split_fingerprint": read_upstream_fingerprint(split_dir / SPLIT_MANIFEST_FILENAME),
@@ -111,7 +102,7 @@ def _augment_train_split(split_dir: Path, augmented_dir: Path) -> None:
           f"{n_img} image(s), {n_lab} label(s) copiés tels quels.")
 
 
-def run_augment(force: bool = False, split_dir: str = SPLIT_DIR, augmented_dir: str = AUGMENTED_DIR):
+def run_augment(force: bool = False, split_dir: str = SPLIT_DIR, augmented_dir: str = AUGMENTED_DIR, run_confirmation=None):
     split_dir_p, augmented_dir_p = Path(split_dir), Path(augmented_dir)
 
     ensure_cache_is_safe(
@@ -120,6 +111,7 @@ def run_augment(force: bool = False, split_dir: str = SPLIT_DIR, augmented_dir: 
         force=force,
         wipe_subdirs=["images", "labels"],
         manifest_filename=MANIFEST_FILENAME,
+        run_confirmation=run_confirmation,
     )
 
     print("--- 🌱 AUGMENTATION (étape 3) ---")

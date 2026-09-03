@@ -9,38 +9,54 @@ par classe claire, pas de calcul direct des taux de faux positifs / faux
 négatifs, pas de distinction entre "vu pendant l'entraînement" (val) et
 "jamais vu" (test).
 
-Ce module génère un rapport HTML autonome (`rapport_lecture.html`, à ouvrir
-dans un navigateur) qui répond directement à deux questions :
-  1. Pour CHAQUE classe, est-ce que je rate des déchets (faux négatifs, donc
-     rappel bas) ou est-ce que je détecte des choses qui n'existent pas
-     (faux positifs, donc précision basse) ?
-  2. Est-ce que la performance tient sur des données jamais vues (split
-     "test") ou seulement sur le split "val" déjà utilisé pendant
-     l'entraînement pour ajuster les hyperparamètres (patience, etc.) ?
+Ce module génère un rapport HTML autonome (`rapport_lecture.html`) qui donne,
+pour chaque split disponible (val, test) et pour chaque classe : le taux de
+faux négatifs (rappel bas = déchets ratés), le taux de faux positifs
+(précision basse = fausses alertes), les mAP, et la matrice de confusion.
 
-Point d'API Ultralytics important (vérifié empiriquement, pas deviné) :
-- `model.val(...)` retourne un objet `SegmentMetrics` avec :
-    - `.summary()` : déjà une table par classe (Box-P/R/F1, Mask-P/R/F1,
-      mAP50, mAP50-95) — c'est la base du tableau par classe ci-dessous.
-    - `.seg` / `.box` : objets avec les agrégats `.mp` (précision moyenne),
-      `.mr` (rappel moyen), `.map50`, `.map`.
-    - `.confusion_matrix.summary()` : la matrice de confusion déjà sous
-      forme de liste de dicts {Predicted: <classe prédite>, <classe réelle
-      1>: n, <classe réelle 2>: n, ..., background: n} — pas besoin de
-      manipuler l'array numpy brut ni de deviner l'ordre des axes.
-    - ATTENTION : la matrice de confusion est calculée sur les BOÎTES
-      (`confusion_matrix.task == 'detect'`), même pour un modèle de
-      segmentation. Elle sert donc à voir QUELLES classes se confondent
-      entre elles, mais les taux de précision/rappel "officiels" utilisés
-      partout ailleurs dans ce rapport sont les métriques MASQUE
-      (`Mask-P` / `Mask-R`), plus fidèles à la vraie tâche (délimiter les
-      déchets), pas les métriques boîte.
+Notes sur l'API Ultralytics utilisée :
+- `model.val(...)` retourne un objet `SegmentMetrics` avec `.summary()`
+  (table par classe : Box-P/R/F1, Mask-P/R/F1, mAP50, mAP50-95) et
+  `.seg`/`.box` (agrégats `.mp`, `.mr`, `.map50`, `.map`).
+- `.confusion_matrix.summary()` retourne la matrice de confusion sous forme
+  de liste de dicts {Predicted: <classe prédite>, <classe réelle 1>: n, ...,
+  background: n}.
+- La matrice de confusion est calculée sur les BOÎTES (`confusion_matrix.task
+  == 'detect'`), même pour un modèle de segmentation : utile pour voir
+  QUELLES classes se confondent entre elles, mais les métriques officielles
+  utilisées partout ailleurs dans ce rapport sont les métriques MASQUE
+  (`Mask-P` / `Mask-R`), plus fidèles à la tâche réelle (délimiter les
+  déchets).
+
+Génère aussi `rapport_metrics.json`, sortie machine-lisible (mêmes chiffres
+que le HTML, plus les hyperparamètres du run lus dans args.yaml et le
+fingerprint de la donnée réellement utilisée à l'entraînement) - c'est ce
+fichier que lit `compare_runs.py` pour comparer plusieurs runs entre eux.
+
+Garde-fou anti-réinterprétation de taxonomie (voir journal, 27/08/2026) :
+avant d'évaluer, vérifie que le modèle chargé (`model.names`, embarqué dans
+les poids au moment de l'entraînement) correspond EXACTEMENT à la taxonomie
+déclarée dans `data_config_path` - lève une RuntimeError claire sinon, plutôt
+que de produire un tableau par classe scrambé (un ID de classe peut désigner
+une classe différente avant/après un changement de taxonomie - voir
+`class_config.assert_model_matches_taxonomy`, déjà utilisé par les 4 outils
+de `src/review/`). Un run entraîné sous une taxonomie révolue doit être
+réentraîné pour être comparable, pas seulement réévalué.
+
+Entrée : dossier d'un run d'entraînement (contenant `weights/<nom>.pt`), et
+config/data_config.yaml (ou un chemin explicite).
+Sortie : `<run_dir>/rapport_lecture.html` + `<run_dir>/rapport_metrics.json`.
+
+Exemple :
+    python src/training/training_report.py --run output/runs/mon_run
 """
 
 import argparse
 import html
+import json
 import sys
 from pathlib import Path
+from typing import Dict, Optional
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
@@ -134,9 +150,59 @@ def _per_class_rows(metrics) -> list:
     return rows
 
 
+def _global_micro_rates(rows: list) -> Dict:
+    """Taux global pondéré par le nombre d'instances réelles de chaque classe -
+    contrairement à mp/mr (moyenne MACRO : chaque classe pèse pareil quel que
+    soit son volume), donne le taux qu'on observerait en comptant tous les
+    objets réels ensemble, tous classes confondues. Reconstruit à partir des
+    taux par classe : TP_c = instances_c * rappel_c, FN_c = instances_c - TP_c,
+    FP_c = TP_c * (1/précision_c - 1).
+
+    Entrée : lignes par classe (sortie de `_per_class_rows`).
+    Sortie : dict {instances, global_precision, global_recall, global_fp_rate,
+    global_fn_rate} - une valeur est None si aucune classe exploitable dans ce split.
+    """
+    total_tp, total_fp, total_instances = 0.0, 0.0, 0
+    for r in rows:
+        n = r["instances"]
+        if n <= 0 or r["mask_r"] is None or r["mask_p"] is None:
+            continue
+        tp = n * r["mask_r"]
+        total_tp += tp
+        total_instances += n
+        if r["mask_p"] > 0:
+            total_fp += tp * (1.0 / r["mask_p"] - 1.0)
+
+    global_recall = (total_tp / total_instances) if total_instances else None
+    global_precision = (total_tp / (total_tp + total_fp)) if (total_tp + total_fp) > 0 else None
+    global_f1 = (
+        (2 * global_precision * global_recall / (global_precision + global_recall))
+        if global_precision is not None and global_recall is not None and (global_precision + global_recall) > 0
+        else None
+    )
+    return {
+        "instances": total_instances,
+        "global_precision": global_precision,
+        "global_recall": global_recall,
+        "global_f1": global_f1,
+        "global_fp_rate": (1 - global_precision) if global_precision is not None else None,
+        "global_fn_rate": (1 - global_recall) if global_recall is not None else None,
+    }
+
+
+def _macro_f1(rows: list) -> Optional[float]:
+    """F1 macro = moyenne des F1 PAR CLASSE (déjà fournis par Ultralytics, `Mask-F1`
+    dans `metrics.summary()`) - PAS F1 recalculé à partir de la précision/rappel macro
+    (mp/mr) : ce sont deux quantités différentes (moyenne de F1 != F1 de la moyenne),
+    et la première est la définition standard du F1 macro. Classes sans instance dans
+    ce split (mask_f1=None) exclues, comme mp/mr d'Ultralytics."""
+    f1_values = [r["mask_f1"] for r in rows if r["instances"] > 0 and r["mask_f1"] is not None]
+    return (sum(f1_values) / len(f1_values)) if f1_values else None
+
+
 def _diagnostics(rows: list) -> list:
     """Constats en langage clair, générés automatiquement à partir des
-    seuils ci-dessus - le coeur de la demande "plus facile à comprendre"."""
+    seuils ci-dessus."""
     notes = []
     for r in rows:
         name = r["class_name"]
@@ -275,7 +341,7 @@ def _per_class_table_html(rows: list) -> str:
         if r["instances"] == 0:
             trs.append(
                 f"<tr class='row-empty'><td>{_esc(r['class_name'])}</td>"
-                f"<td>0</td><td colspan='6' class='muted'>aucune instance dans ce split</td></tr>"
+                f"<td>0</td><td colspan='7' class='muted'>aucune instance dans ce split</td></tr>"
             )
             continue
         fn_rate = 1 - r["mask_r"]
@@ -286,6 +352,7 @@ def _per_class_table_html(rows: list) -> str:
             f"<td>{r['instances']}</td>"
             f"<td>{_pct(r['mask_p'])}</td>"
             f"<td>{_pct(r['mask_r'])}</td>"
+            f"<td><strong>{_pct(r['mask_f1'])}</strong></td>"
             f"<td class='{'flag' if fn_rate > 0.5 else ''}'>{_pct(fn_rate)}</td>"
             f"<td class='{'flag' if fp_rate > 0.5 else ''}'>{_pct(fp_rate)}</td>"
             f"<td>{_pct(r['map50'])}</td>"
@@ -295,6 +362,7 @@ def _per_class_table_html(rows: list) -> str:
     return (
         "<div class='table-scroll'><table class='data-table'><thead><tr>"
         "<th>Classe</th><th>Instances (réel)</th><th>Précision (masque)</th><th>Rappel (masque)</th>"
+        "<th>F1 (masque)<br><span class='muted small'>(résumé P+R en 1 chiffre)</span></th>"
         "<th>Taux de faux négatifs<br><span class='muted small'>(déchets ratés)</span></th>"
         "<th>Taux de faux positifs<br><span class='muted small'>(fausses alertes)</span></th>"
         "<th>mAP50</th><th>mAP50-95</th>"
@@ -305,12 +373,17 @@ def _per_class_table_html(rows: list) -> str:
 def _stat_tiles_html(metrics, rows: list) -> str:
     seg = metrics.seg
     total_instances = sum(r["instances"] for r in rows)
+    global_rates = _global_micro_rates(rows)
     tiles = [
         ("Instances évaluées", f"{total_instances}"),
-        ("Précision moyenne (masque)", _pct(getattr(seg, "mp", 0.0))),
-        ("Rappel moyen (masque)", _pct(getattr(seg, "mr", 0.0))),
+        ("Précision moyenne (masque, macro)", _pct(getattr(seg, "mp", 0.0))),
+        ("Rappel moyen (masque, macro)", _pct(getattr(seg, "mr", 0.0))),
+        ("F1 moyen (masque, macro)", _pct(_macro_f1(rows))),
         ("mAP50 (masque)", _pct(getattr(seg, "map50", 0.0))),
         ("mAP50-95 (masque)", _pct(getattr(seg, "map", 0.0))),
+        ("Précision globale (pondérée instances)", _pct(global_rates["global_precision"])),
+        ("Rappel global (pondéré instances)", _pct(global_rates["global_recall"])),
+        ("F1 global (pondéré instances)", _pct(global_rates["global_f1"])),
     ]
     return "<div class='tiles'>" + "".join(
         f"<div class='tile'><div class='tile-label'>{_esc(label)}</div><div class='tile-value'>{value}</div></div>"
@@ -318,9 +391,8 @@ def _stat_tiles_html(metrics, rows: list) -> str:
     ) + "</div>"
 
 
-def _split_section_html(split: str, metrics) -> str:
+def _split_section_html(split: str, metrics, rows: list) -> str:
     title, description = SPLIT_LABELS.get(split, (f"Split {split}", ""))
-    rows = _per_class_rows(metrics)
     diagnostics = _diagnostics(rows)
 
     return f"""
@@ -459,11 +531,78 @@ def _build_html(run_name: str, sections_html: list) -> str:
 
 
 # ----------------------------------------------------------------------------
+# Métadonnées de run (pour rapport_metrics.json - comparaison entre runs)
+# ----------------------------------------------------------------------------
+
+_HYPERPARAM_KEYS = [
+    "model", "epochs", "imgsz", "batch", "patience", "degrees", "flipud",
+    "fliplr", "copy_paste", "scale", "seed", "deterministic",
+]
+
+
+def _read_run_hyperparams(run_dir: Path) -> Dict:
+    """Lit `<run_dir>/args.yaml` (écrit automatiquement par Ultralytics) pour
+    retrouver les hyperparamètres RÉELS de ce run, plutôt que de supposer que
+    train.py n'a pas changé depuis. Best-effort : dict vide si le fichier est
+    absent ou illisible, un rapport ne doit jamais échouer pour ça."""
+    args_path = run_dir / "args.yaml"
+    if not args_path.exists():
+        return {}
+    try:
+        import yaml
+        with open(args_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return {k: data[k] for k in _HYPERPARAM_KEYS if k in data}
+    except Exception:
+        return {}
+
+
+def _read_sliced_data_fingerprint() -> Optional[str]:
+    """Lit le fingerprint de `4_sliced_dataset` (donnée réellement vue à
+    l'entraînement, après la cascade split -> augmentation -> slicing) AU
+    MOMENT de la génération du rapport - fiable juste après un entraînement
+    (cas d'usage normal, train.py appelle generate_report() immédiatement
+    après), mais reflète l'état COURANT du dossier si le rapport est
+    régénéré plus tard après un nouveau run de data_pipeline.py. Best-effort :
+    None si indisponible (chemin non monté, dataset jamais slicé...)."""
+    try:
+        from src.data.pipeline_utils import read_upstream_fingerprint
+        from src.data.slice_dataset import MANIFEST_FILENAME as SLICE_MANIFEST_FILENAME
+        from src.data.slice_dataset import SLICED_DIR
+        return read_upstream_fingerprint(Path(SLICED_DIR) / SLICE_MANIFEST_FILENAME)
+    except Exception:
+        return None
+
+
+# ----------------------------------------------------------------------------
 # Point d'entrée
 # ----------------------------------------------------------------------------
 
-def generate_report(run_dir, data_config_path=None, weights_name: str = "best.pt", splits=("val", "test")) -> Path:
+def generate_report(
+    run_dir, data_config_path=None, weights_name: str = "best.pt", splits=("val", "test"),
+    output_basename: str = "rapport",
+) -> Path:
+    """Évalue `best.pt` (ou `weights_name`) d'un run sur les splits demandés et
+    écrit deux fichiers dans `run_dir` : le rapport HTML lisible, et un JSON
+    machine-lisible (mêmes métriques + hyperparamètres + fingerprint de
+    donnée) destiné à `compare_runs.py`.
+
+    Entrée : dossier du run, chemin de data_config.yaml (défaut : celui du
+    projet), nom du fichier de poids, splits à évaluer, `output_basename`
+    (préfixe des 2 fichiers de sortie - défaut "rapport", donc
+    "rapport_lecture.html"/"rapport_metrics.json" comme avant ; un préfixe
+    différent permet de générer un rapport scopé - ex: un sous-ensemble de
+    lots via src/review/scoped_report.py - SANS écraser le rapport standard
+    du run).
+    Sortie : chemin du rapport HTML écrit (le JSON est écrit à côté, même
+    préfixe : `<output_basename>_metrics.json`).
+    """
+    import tempfile
+
+    import yaml
     from ultralytics import YOLO  # import tardif : évite de charger torch si le module est juste inspecté
+
+    from src.data.class_config import assert_model_matches_taxonomy
 
     run_dir = Path(run_dir)
     weights_path = run_dir / "weights" / weights_name
@@ -477,23 +616,83 @@ def generate_report(run_dir, data_config_path=None, weights_name: str = "best.pt
 
     model = YOLO(str(weights_path))
 
+    # Garde-fou anti-réinterprétation de taxonomie (même bug/même correctif que les 4
+    # outils de src/review/, voir class_config.assert_model_matches_taxonomy et le
+    # journal du 27/08 "Diagnostic pré-run") : `model.val()` construit son tableau par
+    # classe à partir de `model.names` (EMBARQUÉ dans les poids au moment de
+    # l'entraînement), jamais à partir de `data_config_path`. Si la taxonomie a changé
+    # depuis ce run (classe retirée/renommée, ID renuméroté), les métriques par classe
+    # sont silencieusement scramblées - un ID peut désigner une classe différente
+    # entraînement vs config actuelle, sans qu'aucune erreur ne le signale autrement.
+    # Comparé aux NOMS DÉCLARÉS DANS `data_config_path` lui-même (pas au
+    # `DEFAULT_CLASS_CONFIG_PATH` du projet) : reflète exactement ce que `model.val()`
+    # utilise réellement comme vérité terrain pour CET appel, y compris pour un yaml
+    # temporaire scopé (src/review/scoped_report.py) qui copie data_config.yaml mais
+    # pourrait en théorie diverger.
+    with open(data_config_path, "r", encoding="utf-8") as f:
+        data_config_names = yaml.safe_load(f).get("names", {})
+    target_names = {int(k): str(v) for k, v in data_config_names.items()}
+    model_names = {int(k): str(v) for k, v in model.names.items()}
+    assert_model_matches_taxonomy(model_names, target_names, model_label=str(weights_path))
+
     sections_html = []
+    splits_payload: Dict[str, Dict] = {}
     any_split_evaluated = False
-    for split in splits:
-        try:
-            metrics = model.val(data=str(data_config_path), split=split, plots=False, verbose=False)
-        except Exception as e:  # noqa: BLE001 - un split absent/vide ne doit pas faire échouer tout le rapport
-            print(f"⚠️  Split '{split}' non évalué ({e}) — ignoré dans le rapport.")
-            continue
-        any_split_evaluated = True
-        sections_html.append(_split_section_html(split, metrics))
+    # Bug du 28/08/2026 ("la matrice de confusion n'affiche que des 0") : ce n'était PAS
+    # un arrondi de pourcentage (cm.summary() renvoie déjà des comptes bruts, affichés
+    # tels quels via int(val)) mais `plots=False` ci-dessous. Dans Ultralytics
+    # (ultralytics/models/yolo/detect/val.py), `ConfusionMatrix.process_batch()` - qui
+    # REMPLIT la matrice - n'est appelé QUE si `self.args.plots` est vrai ; avec
+    # plots=False la matrice reste intégralement à 0, y compris sur la diagonale, alors
+    # que les métriques P/R par classe (calculées séparément) restaient correctes -
+    # d'où un rapport avec des vrais chiffres partout SAUF la matrice. Fix : plots=True,
+    # mais redirigé vers un dossier temporaire (project=tmp_val_dir) pour éviter que les
+    # PNG qu'Ultralytics écrit dans ce cas (confusion_matrix.png, PR_curve.png...) ne
+    # polluent run_dir - ce dossier temporaire est jeté à la sortie du `with`.
+    with tempfile.TemporaryDirectory(prefix="pixelodyssey_val_") as tmp_val_dir:
+        for split in splits:
+            try:
+                metrics = model.val(
+                    data=str(data_config_path), split=split, plots=True, verbose=False,
+                    project=tmp_val_dir, name=f"eval_{split}", exist_ok=True,
+                )
+            except Exception as e:  # noqa: BLE001 - un split absent/vide ne doit pas faire échouer tout le rapport
+                print(f"⚠️  Split '{split}' non évalué ({e}) — ignoré dans le rapport.")
+                continue
+            any_split_evaluated = True
+            rows = _per_class_rows(metrics)
+            seg = metrics.seg
+            macro_f1 = _macro_f1(rows)
+            splits_payload[split] = {
+                "macro": {
+                    "precision": float(getattr(seg, "mp", 0.0)),
+                    "recall": float(getattr(seg, "mr", 0.0)),
+                    "f1": float(macro_f1) if macro_f1 is not None else None,
+                    "map50": float(getattr(seg, "map50", 0.0)),
+                    "map50_95": float(getattr(seg, "map", 0.0)),
+                },
+                "global": _global_micro_rates(rows),
+                "per_class": rows,
+            }
+            sections_html.append(_split_section_html(split, metrics, rows))
 
     if not any_split_evaluated:
         raise RuntimeError("Aucun split n'a pu être évalué (val et test indisponibles ou vides) : rapport annulé.")
 
     html_doc = _build_html(run_dir.name, sections_html)
-    out_path = run_dir / "rapport_lecture.html"
+    out_path = run_dir / f"{output_basename}_lecture.html"
     out_path.write_text(html_doc, encoding="utf-8")
+
+    metrics_payload = {
+        "run_name": run_dir.name,
+        "weights_name": weights_name,
+        "hyperparams": _read_run_hyperparams(run_dir),
+        "sliced_data_fingerprint": _read_sliced_data_fingerprint(),
+        "splits": splits_payload,
+    }
+    metrics_path = run_dir / f"{output_basename}_metrics.json"
+    metrics_path.write_text(json.dumps(metrics_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
     return out_path
 
 
@@ -503,12 +702,23 @@ if __name__ == "__main__":
     parser.add_argument("--data", default=None, help="Chemin vers data_config.yaml (par défaut : config/data_config.yaml du projet)")
     parser.add_argument("--weights", default="best.pt", help="Nom du fichier de poids à évaluer, dans <run>/weights/ (défaut: best.pt)")
     parser.add_argument("--splits", default="val,test", help="Splits à évaluer, séparés par des virgules (défaut: val,test)")
+    parser.add_argument("--output-basename", default="rapport",
+                         help="Préfixe des 2 fichiers de sortie dans <run>/ (défaut: 'rapport' -> "
+                              "rapport_lecture.html/rapport_metrics.json). À changer pour ne pas écraser le "
+                              "rapport standard d'un run - ex: généré automatiquement par scoped_report.py.")
     args = parser.parse_args()
 
-    report_path = generate_report(
-        args.run,
-        data_config_path=args.data,
-        weights_name=args.weights,
-        splits=[s.strip() for s in args.splits.split(",") if s.strip()],
-    )
+    try:
+        report_path = generate_report(
+            args.run,
+            data_config_path=args.data,
+            weights_name=args.weights,
+            splits=[s.strip() for s in args.splits.split(",") if s.strip()],
+            output_basename=args.output_basename,
+        )
+    except RuntimeError as e:
+        print(str(e))
+        sys.exit(1)
+    metrics_path = report_path.with_name(f"{args.output_basename}_metrics.json")
     print(f"✅ Rapport généré : {report_path}")
+    print(f"   (+ {metrics_path}, pour src.training.compare_runs)")

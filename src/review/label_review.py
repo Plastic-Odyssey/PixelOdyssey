@@ -3,19 +3,18 @@
 """
 PixelOdyssey - Relecture assistée par modèle (human-in-the-loop).
 
-Objectif : ton propre modèle entraîné (best.pt) sert d'assistant d'annotation
-pour trouver les oublis dans 1_annotated_dataset, plutôt que de ré-inspecter
-des heures d'images à la main. Contexte complet de la décision (2026-08-21) :
-tes métriques de val/test sont faussées quand le modèle détecte correctement
-un déchet que l'annotateur a simplement oublié - ça compte comme un "faux
-positif" alors que c'est un trou dans la vérité terrain, pas une erreur du
-modèle.
+Utilise le modèle entraîné (best.pt) comme assistant d'annotation pour
+repérer les oublis dans 1_annotated_dataset, plutôt que de ré-inspecter les
+images à la main. Une annotation manquante fausse les métriques de val/test :
+une détection correcte du modèle sur un déchet non annoté compte comme un
+faux positif, alors que c'est un trou dans la vérité terrain, pas une erreur
+du modèle.
 
-Ce script ne modifie JAMAIS 1_annotated_dataset directement (règle non
-négociable du projet - voir data_pipeline.py). Il produit un export
-NON DESTRUCTIF, prêt à importer dans une tâche de relecture CVAT, dans un
-sous-dossier horodaté sous 5_review_dataset/. Une fois que tu as validé/
-corrigé dans CVAT, c'est TOI qui réexportes vers le lot correspondant dans
+Ce script ne modifie jamais 1_annotated_dataset directement (règle non
+négociable du projet - voir data_pipeline.py). Il produit un export non
+destructif, prêt à importer dans une tâche de relecture CVAT, dans un
+sous-dossier horodaté sous 5_review_dataset/. Une fois validé/corrigé dans
+CVAT, c'est à l'utilisateur de réexporter vers le lot correspondant dans
 1_annotated_dataset - ce script ne fait que proposer.
 
 Trois paniers de triage (voir src/review/matching.py pour l'appariement
@@ -25,36 +24,34 @@ GT <-> prédictions par classe + IoU) :
      le label exporté (voir la limite de granularité ci-dessous).
   C. GT et prédiction du modèle APPARIÉES (même classe, se recoupent) mais
      avec une IoU faible -> masque existant probablement mal ajusté. Signalé
-     dans le manifeste de relecture pour retouche manuelle dans CVAT - v1 de
-     cet outil ne propose PAS encore de masque de remplacement automatique
-     (piste SAM envisagée plus tard si ce panier s'avère utile en pratique).
+     dans le manifeste de relecture pour retouche manuelle dans CVAT (pas de
+     masque de remplacement automatique proposé).
   (GT sans prédiction correspondante : purement informationnel, jamais
   injecté - ça peut vouloir dire "le modèle a un angle mort", pas
   nécessairement "l'annotation est fausse". Compté dans le résumé, pas
   exporté comme changement.)
 
 LIMITE DE GRANULARITÉ (importante, lire avant d'utiliser) : le modèle prédit
-en espace SUPER-CLASSE (les classes de `names` dans config/data_config.yaml -
-8 à ce jour, voir la taxonomie du 21/08/2026), mais l'annotation brute d'un
-lot se fait en espace FIN (~20 sous-classes selon le lot - "bouteille PET",
-"cagette", etc.). Le modèle ne peut donc JAMAIS dire quelle sous-classe
-précise il a vue - seulement sa famille. Toute injection du panier A porte
-donc une sous-classe "placeholder" (la première sous-classe DE CE LOT qui
-pointe vers la super-classe prédite - voir class_config.pick_placeholder_local_id),
-à corriger manuellement pendant la relecture CVAT. Ce n'est pas un défaut de
-cet outil, c'est une conséquence inévitable d'entraîner sur des super-classes
-en annotant sur ~20 sous-classes : la relecture humaine est ce qui referme
-cet écart.
+en espace SUPER-CLASSE (les classes de `names` dans config/data_config.yaml),
+mais l'annotation brute d'un lot se fait en espace FIN (sous-classes selon
+le lot - "bouteille PET", "cagette", etc.). Le modèle ne peut donc jamais
+dire quelle sous-classe précise il a vue - seulement sa famille. Toute
+injection du panier A porte donc une sous-classe "placeholder" (la première
+sous-classe DE CE LOT qui pointe vers la super-classe prédite - voir
+class_config.pick_placeholder_local_id), à corriger manuellement pendant la
+relecture CVAT. C'est une conséquence inévitable d'entraîner sur des
+super-classes en annotant sur des sous-classes plus fines : la relecture
+humaine est ce qui referme cet écart.
 
-Périmètre par défaut : TOUT le dataset (train + val + test), voir --scope
-ci-dessous. Historiquement restreint à val/test seuls (c'est là que le bruit
-d'annotation fausse le plus directement la mesure de performance - voir
-échange du 21/08/2026), mais l'usage de cet outil a grandi au-delà de ce seul
-objectif : il sert désormais aussi à FAIRE GRANDIR le dataset annoté dans son
-ensemble (voir échange du 23/08/2026) - train contient 70% des images et
-mérite tout autant d'être relu. Passe --scope val_test pour revenir à
-l'ancien périmètre restreint (utile si tu veux juste un diagnostic rapide de
-bruit d'annotation sans lancer une relecture complète).
+Périmètre par défaut : tout le dataset (train + val + test), voir --scope
+ci-dessous. Passe --scope val_test pour te restreindre à val/test (utile
+pour un diagnostic rapide de bruit d'annotation sans lancer une relecture
+complète).
+
+Entrée : manifeste de split (parent_manifest.json), images/labels bruts du
+lot, et soit un modèle entraîné (best.pt) soit un predict_tile_fn injecté.
+Sortie : export non destructif sous 5_review_dataset/<run_id>/ (images,
+labels, data.yaml par lot) + review_manifest.csv listant les paniers A et C.
 
 Usage :
     python -m src.review.label_review
@@ -85,6 +82,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.data.class_config import (
     DEFAULT_CLASS_CONFIG_PATH,
     EXCLUDE,
+    assert_model_matches_taxonomy,
     load_batch_local_names,
     load_class_config,
     pick_placeholder_local_id,
@@ -151,26 +149,24 @@ def _select_parents(parent_manifest: Dict[str, Dict], scope: str) -> Dict[str, D
 
 
 def _write_review_data_yaml(dst_path: Path, local_names: Dict[int, str], splits_present: set) -> None:
-    """Écrit le data.yaml du lot exporté sous 5_review_dataset - PAS une copie du
-    data.yaml original du lot dans 1_annotated_dataset (bug corrigé le 23/08/2026,
-    voir échange du même jour).
+    """Écrit le data.yaml du lot exporté sous 5_review_dataset - jamais une
+    copie du data.yaml original du lot dans 1_annotated_dataset.
 
-    Le data.yaml original d'un lot décrit la mise en page produite par l'export
-    CVAT D'ORIGINE (souvent `train: train.txt`, une liste de chemins - pas de
-    clé val/test du tout, l'export d'origine ne connaissait pas encore le split
-    train/val/test de ce projet). Le copier tel quel dans l'export de relecture
-    est donc FAUX : notre export utilise `images/<split>/` + `labels/<split>/`
-    (comme l'exige le format Ultralytics YOLO Segmentation pour l'import CVAT),
-    jamais un fichier train.txt, et peut couvrir train ET/OU val ET/OU test pour
-    un même lot (--scope all) - jamais un seul train.txt figé. Un data.yaml
-    copié tel quel pointerait donc CVAT vers des fichiers qui n'existent pas
-    dans cet export, ou omettrait val/test si le lot a des images flaguées
-    dans ces splits.
+    Le data.yaml original d'un lot décrit la mise en page de l'export CVAT
+    d'origine (souvent `train: train.txt`, une liste de chemins - pas
+    nécessairement de clé val/test). Le copier tel quel serait faux : cet
+    export utilise toujours `images/<split>/` + `labels/<split>/` (format
+    Ultralytics YOLO Segmentation attendu par CVAT), et peut couvrir train
+    et/ou val et/ou test pour un même lot selon --scope.
 
-    Ce data.yaml généré ici décrit fidèlement la structure RÉELLEMENT exportée :
-    même `names` (mêmes ID locaux que les .txt de labels, INCHANGÉS - ne pas
-    confondre avec le référentiel de super-classes cibles), et une clé par
-    split RÉELLEMENT présent dans cet export (pas les 3 systématiquement).
+    Ce data.yaml généré ici décrit fidèlement la structure réellement
+    exportée : mêmes `names` (mêmes ID locaux que les .txt de labels,
+    INCHANGÉS - à ne pas confondre avec le référentiel de super-classes
+    cibles), et une clé par split réellement présent dans cet export.
+
+    Entrée : chemin de destination, table des noms locaux du lot, ensemble
+    des splits présents dans l'export.
+    Sortie : fichier data.yaml écrit sur disque.
     """
     data = {
         "path": ".",
@@ -332,6 +328,14 @@ def run_review(
 
     class_taxonomy, target_names = load_class_config(DEFAULT_CLASS_CONFIG_PATH)
 
+    # Garde-fou : un modèle entraîné sous une taxonomie différente de la config
+    # actuelle prédirait des ID de classe qui ne veulent plus dire la même chose -
+    # voir assert_model_matches_taxonomy. Absent pour un predict_tile_fn injecté en
+    # test (pas d'attribut model_names, pas de vrai modèle chargé).
+    model_names = getattr(predict_tile_fn, "model_names", None)
+    if model_names is not None:
+        assert_model_matches_taxonomy(model_names, target_names, model_label=str(model_path or ""))
+
     manifest_path = Path(split_dir) / PARENT_MANIFEST_FILENAME
     if not manifest_path.exists():
         raise RuntimeError(
@@ -365,11 +369,9 @@ def run_review(
     counts = {"bucket_a": 0, "bucket_c": 0, "gt_unmatched": 0, "images_processed": 0}
     # Une image qui plante (fichier corrompu, format inattendu que même
     # image_io.load_image_bgr ne rattrape pas, etc.) ne doit jamais faire
-    # perdre le travail déjà fait sur les 167 autres - voir le try/except
-    # ci-dessous. Chaque échec est listé ici avec son chemin EXACT (pas
-    # seulement un message générique) pour pouvoir aller inspecter le fichier
-    # en cause, plutôt qu'un plantage sec qui ne dit pas laquelle des 168
-    # images est en cause.
+    # perdre le travail déjà fait sur les autres images - voir le try/except
+    # ci-dessous. Chaque échec est listé ici avec son chemin exact pour
+    # pouvoir aller inspecter le fichier en cause.
     failed_images: List[Dict] = []
 
     for parent_id, info in selected.items():
@@ -490,7 +492,7 @@ def run_review(
 
             counts["images_processed"] += 1
 
-        except Exception as e:  # noqa: BLE001 - une image en cause ne doit jamais arrêter les 167 autres
+        except Exception as e:  # noqa: BLE001 - une image en cause ne doit jamais arrêter les autres
             print(f"  ❌ Échec sur {raw_img_path} (lot '{batch_name}') - ignorée, relecture continue : {e}")
             failed_images.append({"batch": batch_name, "image": str(raw_img_path), "error": str(e)})
             continue

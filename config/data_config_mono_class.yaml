@@ -1,0 +1,92 @@
+# PixelOdyssey - Configuration MONO-CLASSE ("Dechet_Plastique" uniquement)
+#
+# Variante expérimentale (voir train.py/data_pipeline.py --config/--suffix) :
+# teste la capacité du modèle à simplement DÉTECTER un déchet plastique sur
+# une plage, sans aucun objectif de classification fine. UNE seule classe
+# cible - toute la logique de rééquilibrage par classe (copy_paste, cls_pw,
+# etc., voir train.py) devient sans objet ici : il n'y a plus qu'une seule
+# classe à équilibrer, le seul déséquilibre qui reste est train/val/test
+# lui-même (voir --balance-by items dans split_dataset.py, ajouté le
+# 02/09/2026 pour ce cas précis).
+#
+# Générer le dataset tuilé correspondant (jamais mélangé avec le dataset
+# 7-classes principal - `path` ci-dessous pointe vers un dossier séparé) :
+#   python -m src.data.data_pipeline --config config/data_config_mono_class.yaml \
+#       --suffix _mono_class --balance-by items
+# Puis entraîner :
+#   python -m src.training.train --config config/data_config_mono_class.yaml --default-augment --tag mono_class_baseline
+
+path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_mono_class
+train: images/train
+val: images/val
+test : images/test
+
+# ============================================================================
+# TAXONOMIE CIBLE : une seule classe - on ne cherche plus à distinguer QUOI,
+# seulement SI un déchet plastique est présent.
+# ============================================================================
+names:
+  0: Dechet_Plastique
+
+# ============================================================================
+# RÉFÉRENTIEL DE CLASSES - mêmes clés que config/data_config.yaml (le nom brut
+# annoté par chaque lot ne change pas), mais TOUTES pointent vers la même
+# classe cible 0 au lieu de 7 super-classes séparées. `class_aliases`
+# ci-dessous est repris À L'IDENTIQUE (ces divergences d'orthographe entre
+# lots existent indépendamment du nombre de super-classes).
+#
+# Décisions reprises À L'IDENTIQUE du référentiel 7-classes, PAS changées
+# sans raison :
+#   - "Morceaux de bois", "Verre" restent exclus : matière confirmée NON
+#     plastique - le critère d'exclusion "est-ce du plastique ?" reste valide
+#     ici, contrairement au critère de forme qui n'a plus de sens.
+#   - "à déterminer" reste exclu : matière encore réellement inconnue (pourrait
+#     ne pas être du plastique) - décision non tranchée, gardée prudente.
+#   - "Inconnu" reste EXCLU ici aussi (décision du 02/09/2026, revenant sur une
+#     proposition de réintégration faite le même jour). L'argument théorique
+#     "l'exclusion du 26/08 visait une confusion de FORME, sans objet en
+#     mono-classe" tient toujours, mais Jame a choisi de garder "Inconnu" hors
+#     du dataset pour l'instant - prudence assumée plutôt qu'optimisation du
+#     volume de données. À reconsidérer plus tard si besoin de plus de données.
+# ============================================================================
+
+class_taxonomy:
+  "bouteille PET": 0
+  "Bouteille Plastique rigide": 0
+  "fliflops": 0
+  "cagette": 0
+  "Bouées": 0
+  "Bouées pieuvre": 0
+  "flotteurs": 0
+  "Cordage": 0
+  "Petit bidon": 0
+  "Sceau": 0
+  "Plastique souple (sac)": 0
+  "Mousse expansée": 0
+  "Polystyrene": 0
+  "Fragments plastique rigide": 0
+  "Tissu": 0
+  "casques": 0
+  "bouchons": 0
+  "Morceaux de bois": exclude
+  "Verre": exclude
+  "à déterminer": exclude
+  "Inconnu": exclude       # voir note ci-dessus - reste exclu pour l'instant, comme en 7-classes
+
+  # Auto-mapping des super-classes 7-classes vers elles-mêmes (nécessaire
+  # UNIQUEMENT pour bootstrap_annotate.py - voir la même section dans
+  # data_config.yaml) : toutes vers la classe unique 0 ici aussi.
+  "Bouteille": 0
+  "Flipflops": 0
+  "Cagette": 0
+  "Bouee": 0
+  "Cordage_Filet": 0
+  "Bidon": 0
+  "Debris_Divers": 0
+
+# Identique à data_config.yaml - ces divergences d'orthographe entre lots ne
+# dépendent pas du nombre de super-classes.
+class_aliases:
+  "flipflops": "fliflops"
+  "bouteilles_pet": "bouteille PET"
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide"

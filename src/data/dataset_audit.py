@@ -5,16 +5,16 @@ PixelOdyssey - Audit descriptif du dataset brut (1_annotated_dataset).
 
 Objectif : donner des chiffres concrets - nombre d'instances, nombre
 d'images, dispersion de taille/forme - par classe brute, pour trancher la
-question "quelles classes brutes regrouper dans quelle super-classe"
-(cf. échange du 21/08/2026) à partir de données réelles plutôt que d'une
-intuition sur la forme des objets.
+question "quelles classes brutes regrouper dans quelle super-classe" à
+partir de données réelles plutôt que d'une intuition sur la forme des
+objets.
 
-DÉLIBÉRÉMENT INDÉPENDANT de `class_taxonomy` (config/data_config.yaml) :
-cet outil sert à CONSTRUIRE cette taxonomie, il ne doit donc jamais dépendre
+Délibérément indépendant de `class_taxonomy` (config/data_config.yaml) :
+cet outil sert à construire cette taxonomie, il ne doit donc jamais dépendre
 de son état (complet, vide, en cours de réécriture...) pour fonctionner. Les
-seules correspondances d'orthographe qu'il connaît sont codées en dur ci-
-dessous (ALIASES) - les mêmes divergences déjà identifiées pour
-class_aliases, dupliquées ici volontairement pour ce découplage.
+seules correspondances d'orthographe qu'il connaît sont codées en dur
+ci-dessous (ALIASES) - les mêmes divergences que class_aliases, dupliquées
+ici volontairement pour ce découplage.
 
 Pour chaque classe brute (après normalisation casse/accents/underscores +
 résolution des alias d'orthographe connus), calcule :
@@ -22,15 +22,19 @@ résolution des alias d'orthographe connus), calcule :
   - aire de l'objet en % de l'aire de l'image (comparable entre lots même à
     des résolutions différentes, contrairement à l'aire en pixels bruts)
   - ratio largeur/hauteur de la boîte englobante (proxy grossier de forme)
-  - coefficient de variation (écart-type / moyenne) de l'aire ET du ratio
-    largeur/hauteur : PLUS CE NOMBRE EST BAS, plus les objets de cette classe
+  - coefficient de variation (écart-type / moyenne) de l'aire et du ratio
+    largeur/hauteur : plus ce nombre est bas, plus les objets de cette classe
     se ressemblent en taille/forme d'une instance à l'autre - un bon indice
     (parmi d'autres, pas une preuve à lui seul) pour juger si une classe a
-    "une forme reconnaissable et récurrente" ou si c'est un fourre-tout.
+    une forme reconnaissable et récurrente ou si c'est un fourre-tout.
 
-Usage :
+Entrée : dossier racine des lots d'annotation bruts (--raw-dir).
+Sortie : rapport CSV (--output) trié par nombre d'instances décroissant, et
+un résumé affiché sur stdout.
+
+Exemple :
     python -m src.data.dataset_audit
-    python -m src.data.dataset_audit --raw-dir "E:\\...\\1_annotated_dataset" --output audit.csv
+    python -m src.data.dataset_audit --raw-dir "1_annotated_dataset" --output audit.csv
 """
 
 import argparse
@@ -123,10 +127,10 @@ def run_audit(raw_dir: str = RAW_DIR_DEFAULT, output_csv: str = OUTPUT_CSV_DEFAU
     total_by_batch: Dict[str, int] = {}
     classes_by_batch: Dict[str, set] = {}
     # Résolutions natives par lot (largeur, hauteur) - sert à répondre à une question
-    # concrète : les "imagettes" déjà découpées d'un lot (ex: SB, annotées directement
-    # à une taille fixe plutôt que sur l'orthomosaïque complète) sont-elles exactement
-    # 640x640, ou une autre taille ? Ça détermine comment slicer.py (étape 4) les
-    # traite - voir la correction du 22/08/2026 dans slicer.py (LOGIC_VERSION 3).
+    # concrète : les images déjà découpées d'un lot (ex: annotées directement à une
+    # taille fixe plutôt que sur l'orthomosaïque complète) sont-elles exactement
+    # tile_size x tile_size, ou une autre taille ? Ça détermine comment slicer.py
+    # (étape 4) les traite.
     dims_by_batch: Dict[str, Dict[tuple, int]] = {}
 
     for item in unique_parents:
@@ -220,11 +224,10 @@ def run_audit(raw_dir: str = RAW_DIR_DEFAULT, output_csv: str = OUTPUT_CSV_DEFAU
         n_classes = len(classes_by_batch.get(batch, set()))
         print(f"{batch:<20} {n_total:>9} {n_obj:>11} {n_bg:>11} {n_classes:>21}")
 
-    # --- Résolutions natives par lot : dit si un lot est à taille FIXE (une seule
-    # entrée, ex: "640x640 (104 images)") - cas typique d'imagettes déjà découpées
-    # à l'annotation (lots SB) - ou VARIABLE (plusieurs tailles, ex: orthomosaïques
-    # brutes découpées à la main, lots SL/A LEG). Important pour savoir comment
-    # slicer.py (étape 4) va traiter ce lot - voir LOGIC_VERSION 3 dans slicer.py.
+    # --- Résolutions natives par lot : dit si un lot est à taille fixe (une seule
+    # entrée) - cas typique d'imagettes déjà découpées à l'annotation - ou variable
+    # (plusieurs tailles, ex: orthomosaïques brutes découpées à la main). Important
+    # pour savoir comment slicer.py (étape 4) va traiter ce lot.
     print(f"\n--- 📐 RÉSOLUTIONS NATIVES PAR LOT ---")
     for batch in batches_seen:
         dims = dims_by_batch.get(batch, {})

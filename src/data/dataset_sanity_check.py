@@ -11,6 +11,14 @@ Réutilisable à PLUSIEURS étapes du pipeline (pas seulement la sortie finale) 
 Les trois dossiers ont la même structure images/{split} + labels/{split}, donc
 le même checker s'applique à tous sans modification. Appelé automatiquement
 après chaque étape par l'orchestrateur (data_pipeline.py).
+
+Entrée : chemin d'un dossier `images/{split}` + `labels/{split}` (via
+--base-path ou config/data_config.yaml).
+Sortie : dict {"ok", "missing_splits", "orphan_issues"} ; code de sortie 0/1
+en usage CLI.
+
+Exemple :
+    python -m src.data.dataset_sanity_check --base-path data/2_split_dataset
 """
 
 import argparse
@@ -22,18 +30,10 @@ from typing import Optional
 import yaml
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-# Source partagée (voir raw_dataset.py) - PAS redéfini ici. Bug réel trouvé le
-# 24/08/2026 en vérifiant l'état du code avant un nouvel entraînement : cette
-# copie locale ne listait que .jpg/.jpeg/.png, sans .tif/.tiff. Ce checker
-# tourne pourtant AUSSI sur `2_split_dataset` (voir data_pipeline.py) - qui
-# contient encore les images parentes brutes, donc les vrais .tif des lots
-# SL/A LEG AVANT slicing. Toute image .tif y était donc invisible pour ce
-# checker : son label .txt (bien réel) ressortait comme "label orphelin sans
-# image correspondante" - une fausse alerte de bug pipeline à chaque run sur
-# ces lots, alors qu'il n'y avait rien d'anormal. Sans conséquence sur
-# `4_sliced_dataset` (toutes les tuiles y sont en .png, voir slicer.py), donc
-# le bug n'était visible qu'à l'étape intermédiaire, jamais sur le résultat
-# final - ce qui explique qu'il soit passé inaperçu jusqu'ici.
+# Source partagée (voir raw_dataset.py) - à ne pas redéfinir localement : ce
+# checker tourne aussi sur `2_split_dataset`, qui contient encore les images
+# parentes brutes (dont des .tif), donc la liste d'extensions doit couvrir
+# .tif/.tiff en plus de .jpg/.jpeg/.png pour ne pas générer de faux orphelins.
 from src.data.raw_dataset import VALID_IMG_EXTS
 
 
