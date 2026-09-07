@@ -1,0 +1,46 @@
+# PixelOdyssey - Registre des modèles "opérationnels" pour le pipeline
+# application (src/application/run_application.py --model).
+#
+# Décision du 04/09/2026 : registre dédié rempli À LA MAIN, PAS un scan
+# automatique de output/runs/ - ce dossier contient aussi des essais de
+# réglage ratés/expérimentaux (voir tous les runs de comparaison
+# d'hyperparamètres du projet) qu'on ne veut jamais proposer par erreur pour
+# un usage terrain. Ajouter une entrée ici = le rendre sélectionnable via
+# `--model <name>` ou dans la liste interactive si aucun `--model` n'est
+# fourni.
+#
+# `weights_path` : chemin vers le fichier .pt (best.pt), relatif à la racine
+# du projet ou absolu - vérifié à l'exécution (erreur explicite si le
+# fichier n'existe plus, ex: dossier de run supprimé/déplacé).
+#
+# `taxonomy_config` (optionnel) : fichier config/data_config*.yaml utilisé À
+# L'ENTRAÎNEMENT de ce modèle précis (mono-classe vs 7-classes n'ont pas le
+# même référentiel) - nécessaire pour le garde-fou anti-mismatch
+# `assert_model_matches_taxonomy` (déjà utilisé partout ailleurs dans
+# src/review/). Absent -> retombe sur config/data_config.yaml (7-classes).
+#
+# Exemple d'entrée (à dé-commenter et adapter une fois un modèle validé
+# désigné comme "prêt terrain") :
+#   - name: "mono_class_v1"
+#     weights_path: "output/runs/mono_class_tuned_recipe_yolo11s_patience0_yolo11s-seg_20260904_105005/weights/best.pt"
+#     description: "Mono-classe (Dechet_Plastique), yolo11s-seg, tuned_recipe, best epoch 80/100"
+#     date: "2026-09-04"
+#     taxonomy_config: "config/data_config_mono_class.yaml"
+
+# Entrée choisie le 04/09/2026 : parmi les 8 runs mono-classe disponibles
+# dans output/runs/ à cette date, celui-ci a le meilleur test set
+# (rapport_metrics.json) : precision 0.538, recall 0.527, F1 0.532,
+# mAP50-95 0.313 - devant tuned_recipe en yolo11n-seg (F1 0.519),
+# imgsz960 (F1 0.494), baseline (F1 0.455) et yolo11s sans augmentation
+# nadir (F1 0.462). Voir le journal de décisions (entrée du 04/09/2026,
+# "Registre de modèles opérationnels") pour le détail de la comparaison
+# et une anomalie trouvée en le sélectionnant : 3 runs plus récents
+# (batch-1/batch32/batch64, 04/09 après-midi) censés tester des tailles
+# de batch différentes ont en réalité tous tourné avec batch=16 (vérifié
+# dans leurs args.yaml) - à corriger avant de retenter cette expérience.
+models:
+  - name: "mono_class_v1"
+    weights_path: "output/runs/mono_class_tuned_recipe_yolo11s_patience0_yolo11s-seg_20260904_105005/weights/best.pt"
+    description: "Mono-classe (Dechet_Plastique), yolo11s-seg, tuned_recipe (degrees=180/flipud=0.5), meilleur F1 test (0.532) parmi les runs mono-classe au 04/09/2026"
+    date: "2026-09-04"
+    taxonomy_config: "config/data_config_mono_class.yaml"

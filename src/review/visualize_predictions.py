@@ -31,13 +31,32 @@ Entrée : manifeste de split (parent_manifest.json), images brutes, et soit
 un modèle entraîné (best.pt) soit un predict_tile_fn injecté.
 Sortie : page HTML interactive sous <output_dir>/<run_id>/index.html.
 
+Taxonomie du modèle visualisé (ajouté le 03/09/2026, suite au dataset mono-classe) :
+la taxonomie n'est PAS déduite du modèle lui-même - elle vient de `--config`
+(défaut : config/data_config.yaml, le référentiel 7-classes principal), qui
+DOIT être le MÊME fichier que celui utilisé pour entraîner le modèle passé à
+--model (voir train.py --config / data_pipeline.py --config). Le garde-fou
+`assert_model_matches_taxonomy` compare `model.names` (embarqué dans les
+poids) à cette taxonomie et lève une erreur claire en cas de mismatch, plutôt
+que de scrambler silencieusement les noms de classe affichés. De même,
+`--split-dir` doit pointer vers le manifeste DU MÊME dataset (ex:
+2_split_dataset_mono_class pour un modèle mono-classe) - sinon les parent_id
+du manifeste ne correspondent à rien de cohérent pour ce modèle.
+
 Usage :
     python -m src.review.visualize_predictions
         -> sélection interactive du modèle (comme label_review.py), scope
-           val par défaut, ouvre ensuite output/../6_prediction_viewer/<run>/
-           index.html dans un navigateur.
+           val par défaut, taxonomie 7-classes par défaut, ouvre ensuite
+           output/../6_prediction_viewer/<run>/index.html dans un navigateur.
     python -m src.review.visualize_predictions --scope test --batch "SL"
     python -m src.review.visualize_predictions --model output/runs/<run>/weights/best.pt --limit 40
+
+    Modèle mono-classe (taxonomie ET split différents du 7-classes par défaut) :
+    python -m src.review.visualize_predictions \\
+        --model output/runs/mono_class_tuned_recipe_patience0_yolo11n-seg_.../weights/best.pt \\
+        --config config/data_config_mono_class.yaml \\
+        --split-dir "E:\\PixelOdyssey\\3. Processed dataset\\2_split_dataset_mono_class" \\
+        --scope test --run-id mono_class_tuned_recipe_test
 """
 
 import argparse
@@ -281,6 +300,7 @@ def run_visualize(
     limit: Optional[int] = None,
     raw_dir: str = RAW_DIR,
     split_dir: str = SPLIT_DIR,
+    class_config_path=DEFAULT_CLASS_CONFIG_PATH,
     output_dir: str = VIEWER_DIR,
     tile_size: int = 640,
     overlap: int = 256,
@@ -293,7 +313,15 @@ def run_visualize(
     predict_tile_fn=None,
 ) -> Dict:
     """Voir la docstring du module. `predict_tile_fn` : même rôle qu'en
-    label_review.py, pour les tests (faux modèle, pas de poids réels)."""
+    label_review.py, pour les tests (faux modèle, pas de poids réels).
+
+    `class_config_path` (ajouté le 03/09/2026, pour rendre l'outil utilisable
+    sur un modèle mono-classe sans le forcer sur le référentiel 7-classes) :
+    référentiel de classes à utiliser pour résoudre les noms affichés ET pour
+    le garde-fou anti-mismatch (`assert_model_matches_taxonomy` ci-dessous) -
+    DOIT être le même fichier que celui utilisé pour entraîner `model_path`.
+    `split_dir` doit, de la même façon, pointer vers le manifeste DU MÊME
+    dataset que ce modèle (ex: 2_split_dataset_mono_class)."""
     if predict_tile_fn is None:
         if not model_path:
             available_models = _discover_available_models(RUNS_DIR)
@@ -306,7 +334,7 @@ def run_visualize(
             model_path = _prompt_model_choice(available_models, RUNS_DIR)
         predict_tile_fn = make_ultralytics_predict_fn(model_path, conf_threshold=tile_conf_threshold)
 
-    class_taxonomy, target_names = load_class_config(DEFAULT_CLASS_CONFIG_PATH)
+    class_taxonomy, target_names = load_class_config(class_config_path)
 
     # Garde-fou : voir la même vérification dans label_review.py. Absent pour un
     # predict_tile_fn injecté en test (pas d'attribut model_names).
@@ -427,6 +455,32 @@ if __name__ == "__main__":
         help="Chemin vers le modèle entraîné (best.pt). Optionnel : si omis, sélection interactive "
              "parmi les modèles trouvés sous output/runs/*/weights/best.pt (comme label_review.py).",
     )
+    parser.add_argument(
+        "--config", default=str(DEFAULT_CLASS_CONFIG_PATH),
+        help="Référentiel de classes à utiliser (défaut : config/data_config.yaml, le 7-classes "
+             "principal) - DOIT être le même fichier que celui utilisé pour entraîner --model. "
+             "Ex: config/data_config_mono_class.yaml pour un modèle mono-classe. Un mismatch entre "
+             "--model et --config est bloqué par un garde-fou explicite (assert_model_matches_taxonomy), "
+             "pas silencieusement scrambé.",
+    )
+    parser.add_argument(
+        "--split-dir", default=SPLIT_DIR,
+        help=f"Dossier du split à visualiser, DOIT correspondre au dataset utilisé par --model (défaut : "
+             f"{SPLIT_DIR}). Ex: .../2_split_dataset_mono_class pour un modèle mono-classe.",
+    )
+    parser.add_argument(
+        "--raw-dir", default=RAW_DIR,
+        help=f"Dossier de donnée brute source (défaut : {RAW_DIR}) - partagé entre toutes les variantes "
+             f"de taxonomie/split (seul 1_annotated_dataset reste commun, voir data_pipeline.py), à "
+             f"changer seulement pour une variante de donnée brute (ex: 1bis_corrected_annotation).",
+    )
+    parser.add_argument(
+        "--run-id", default=None,
+        help="Nom du sous-dossier de sortie sous 6_prediction_viewer/ (défaut : horodatage "
+             "'viz_AAAAMMJJ_HHMMSS'). Utile pour retrouver facilement un run vu son nom plutôt qu'un "
+             "horodatage, surtout avec plusieurs taxonomies mélangées dans le même dossier - ex: "
+             "--run-id mono_class_tuned_recipe_test.",
+    )
     parser.add_argument("--scope", choices=["train", "val", "test", "all"], default="val",
                         help="Quel(s) split(s) visualiser (défaut: val).")
     parser.add_argument("--batch", default=None,
@@ -456,6 +510,10 @@ if __name__ == "__main__":
             scope=args.scope,
             batch_filter=args.batch,
             limit=args.limit,
+            raw_dir=args.raw_dir,
+            split_dir=args.split_dir,
+            class_config_path=args.config,
+            run_id=args.run_id,
             tile_size=args.tile_size,
             overlap=args.overlap,
             tile_conf_threshold=args.tile_conf_threshold,

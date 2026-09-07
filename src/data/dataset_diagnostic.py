@@ -59,6 +59,35 @@ Sortie : un classeur .xlsx avec les feuilles :
   - Par super-classe    : agrégats/moyennes sur la taxonomie cible (7 classes)
   - Par collecte        : agrégats/moyennes par lot (dossier de 1er niveau)
   - Par classe brute     : granularité fine, pour recoupement avec dataset_audit.py
+  - Par split            : totaux par split train/val/test (ajouté le 03/09/2026,
+    demande de vérification d'équilibre de classe sur le dataset multi-classe -
+    voir aussi "Répartition classes x split" ci-dessous, la feuille qui répond
+    réellement à cette question)
+  - Répartition classes x split : LA feuille pour repérer un déséquilibre de
+    classe entre train/val/test - une ligne par super-classe, avec pour
+    chaque split : le compte brut, "% du split" (part de cette classe PARMI
+    les items de ce split - révèle une classe sur/sous-représentée dans un
+    split par rapport aux autres) et "% de la classe" (part des instances de
+    CETTE classe qui tombe dans ce split - révèle une classe rare presque
+    absente de val/test, donc impossible à évaluer correctement). Triée par
+    `ecart_max_pct_pts` décroissant (écart max de "% du split" entre les 3
+    splits pour cette classe) pour faire remonter les pires déséquilibres en
+    premier. Colonne `alerte` : signale explicitement une classe totalement
+    absente de val ou test (le cas le plus grave - au-delà d'un déséquilibre,
+    c'est une classe qu'on ne peut même pas évaluer).
+
+EXCLUDE (classes explicitement exclues de l'entraînement, ex. "Morceaux de
+bois"/"Verre") : présentes dans "Items" (dump exhaustif, colonne `est_exclue`)
+et comptées dans "Résumé", mais retirées de TOUTES les feuilles agrégées par
+super-classe ("Par super-classe", "Par collecte", "Par split", "Répartition
+classes x split", demande du 03/09/2026) - une classe jamais vue à
+l'entraînement n'a pas sa place dans un diagnostic de composition/équilibre
+de ce qui EST entraîné, et sa présence y faussait les pourcentages (dénominateur
+gonflé) tout en risquant de déclencher à tort l'alerte "absente de val/test".
+NON RÉSOLU (classe brute non reconnue par la taxonomie - anomalie, pas une
+exclusion voulue) reste inclus partout, volontairement : à corriger, pas à
+masquer. "Par classe brute" reste lui aussi sur le jeu complet (recoupement
+avec dataset_audit.py, qui n'a aucune notion d'exclusion).
 
 Exemple :
     python -m src.data.dataset_diagnostic
@@ -303,6 +332,7 @@ def build_items(
                 continue
 
             resolved = resolve_class_name(raw_name, taxonomy)
+            est_exclue = False
             if resolved is None:
                 super_classe = "⚠ NON RÉSOLU"
                 super_classe_id = None
@@ -312,6 +342,7 @@ def build_items(
                 super_classe = "EXCLUDE (jamais utilisée à l'entraînement)"
                 super_classe_id = None
                 counters["n_instances_exclues"] += 1
+                est_exclue = True
             else:
                 super_classe = target_names.get(resolved, f"classe_{resolved}")
                 super_classe_id = resolved
@@ -343,6 +374,7 @@ def build_items(
                 "classe_brute": raw_name,
                 "super_classe": super_classe,
                 "super_classe_id": super_classe_id,
+                "est_exclue": est_exclue,
                 "image_largeur_px": img_w,
                 "image_hauteur_px": img_h,
                 "aire_px": aire_px,
@@ -401,6 +433,10 @@ def _write_summary_sheet(
 
 
 def _write_per_class_sheet(writer, df_items: pd.DataFrame) -> None:
+    """`df_items` reçu ici est déjà filtré des instances EXCLUDE par l'appelant
+    (voir run_diagnostic) - cette feuille porte sur la taxonomie CIBLE
+    (super-classes réellement entraînées), une instance EXCLUDE n'y a pas sa
+    place plus qu'une instance qui n'existerait pas."""
     if df_items.empty:
         return
     rows = []
@@ -428,6 +464,10 @@ def _write_per_class_sheet(writer, df_items: pd.DataFrame) -> None:
 
 
 def _write_per_batch_sheet(writer, df_items: pd.DataFrame) -> None:
+    """`df_items` reçu ici est déjà filtré des instances EXCLUDE (voir
+    run_diagnostic) - sans ça, `n_super_classes_presentes`/`classes_presentes`
+    afficherait "EXCLUDE (jamais utilisée à l'entraînement)" comme si c'était
+    une vraie super-classe de ce lot."""
     if df_items.empty:
         return
     rows = []
@@ -487,6 +527,113 @@ def _write_per_raw_class_sheet(writer, df_items: pd.DataFrame) -> None:
     out.to_excel(writer, sheet_name="Par classe brute", index=False)
 
 
+def _write_per_split_sheet(writer, df_items: pd.DataFrame) -> None:
+    """Une ligne par split (train/val/test, + 'indisponible' si le manifeste
+    de split n'existe pas encore) - vue d'ensemble avant le détail par classe
+    de `_write_class_by_split_sheet` ci-dessous.
+
+    `df_items` reçu ici est déjà filtré des instances EXCLUDE (voir
+    run_diagnostic) : `pct_instances_dataset`/`n_super_classes_presentes` ne
+    doivent porter que sur les instances réellement entraînables, sinon un
+    split avec plus d'instances EXCLUDE que les autres semblerait
+    artificiellement plus riche."""
+    if df_items.empty:
+        return
+    split_order = {"train": 0, "val": 1, "test": 2, "indisponible": 3}
+    n_total = len(df_items)
+    rows = []
+    for split, g in df_items.groupby("split"):
+        rows.append({
+            "split": split,
+            "n_instances": len(g),
+            "pct_instances_dataset": round(100.0 * len(g) / n_total, 1) if n_total else 0.0,
+            "n_images": g["chemin_image_complet"].nunique(),
+            "n_super_classes_presentes": g["super_classe"].nunique(),
+            "classes_presentes": ", ".join(f"{c}({n})" for c, n in g["super_classe"].value_counts().items()),
+        })
+    out = pd.DataFrame(rows)
+    out["_ordre"] = out["split"].map(split_order).fillna(99)
+    out = out.sort_values("_ordre").drop(columns="_ordre")
+    out.to_excel(writer, sheet_name="Par split", index=False)
+
+
+def _write_class_by_split_sheet(writer, df_items: pd.DataFrame) -> List[str]:
+    """LA feuille qui répond à "y a-t-il un déséquilibre de classe entre
+    train/val/test ?" (demande du 03/09/2026, dataset multi-classe - voir
+    docstring du module). Une ligne par super-classe RÉELLEMENT ENTRAÎNÉE :
+    `df_items` reçu ici est déjà filtré des instances EXCLUDE par l'appelant
+    (voir run_diagnostic) - une classe jamais vue à l'entraînement n'a rien à
+    faire dans un diagnostic de déséquilibre ENTRE splits d'entraînement
+    (demande du 03/09/2026, correction du choix initial ci-dessous). Sans ce
+    filtre, `pct_du_split`/`ecart_max_pct_pts` étaient faussés par le poids
+    d'EXCLUDE dans chaque split, ET EXCLUDE apparaissait comme une classe à
+    part entière risquant de déclencher l'alerte "absente de val/test" alors
+    qu'elle n'a par construction jamais vocation à y être évaluée.
+    NON RÉSOLU reste en revanche inclus (pas concerné par cette demande) :
+    contrairement à EXCLUDE (exclusion volontaire et connue), NON RÉSOLU
+    signale une vraie anomalie de données à corriger, pas à masquer.
+
+    Deux normalisations différentes, toutes deux nécessaires (l'une ne
+    remplace pas l'autre) :
+      - pct_du_split_<split> : part de CE split occupée par cette classe -
+        révèle une classe sur/sous-représentée dans un split par rapport aux
+        autres (ex: une classe qui pèse 40% du train mais 10% du test).
+      - pct_de_la_classe_<split> : part des instances de CETTE classe qui
+        atterrit dans ce split - révèle une classe rare presque absente de
+        val/test (donc non évaluable), même si son poids relatif DANS ce
+        split minuscule semble correct.
+
+    `ecart_max_pct_pts` : écart max de pct_du_split entre les 3 splits pour
+    cette classe - sert de score de tri (pires déséquilibres en premier), pas
+    un jugement de gravité absolu (voir `alerte` pour le cas vraiment grave :
+    classe totalement absente de val ou test).
+
+    Sortie : liste des messages d'alerte (classe absente de val/test), pour
+    affichage console immédiat par l'appelant - ne pas laisser ce signal
+    enfoui dans un fichier xlsx qu'on n'ouvrira peut-être pas tout de suite.
+    """
+    if df_items.empty:
+        return []
+
+    all_splits = list(df_items["split"].unique())
+    split_order = [s for s in ("train", "val", "test", "indisponible") if s in all_splits]
+    split_order += [s for s in all_splits if s not in split_order]  # valeur inattendue -> en fin, pas perdue
+
+    counts = df_items.groupby(["super_classe", "split"]).size().unstack(fill_value=0)
+    counts = counts.reindex(columns=split_order, fill_value=0)
+    split_totals = {s: int(counts[s].sum()) for s in split_order}
+
+    console_alerts: List[str] = []
+    rows = []
+    for super_classe, row in counts.iterrows():
+        total_classe = int(row.sum())
+        row_out = {"super_classe": super_classe, "n_total": total_classe}
+        pct_du_split_values = []
+        for s in split_order:
+            n_s = int(row[s])
+            row_out[f"n_{s}"] = n_s
+            pct_du_split = round(100.0 * n_s / split_totals[s], 2) if split_totals[s] else 0.0
+            row_out[f"pct_du_split_{s}"] = pct_du_split
+            pct_du_split_values.append(pct_du_split)
+            row_out[f"pct_de_la_classe_{s}"] = round(100.0 * n_s / total_classe, 1) if total_classe else 0.0
+        row_out["ecart_max_pct_pts"] = (
+            round(max(pct_du_split_values) - min(pct_du_split_values), 2) if pct_du_split_values else 0.0
+        )
+
+        alerts = []
+        for s in ("val", "test"):
+            if s in split_order and int(row.get(s, 0)) == 0 and total_classe > 0:
+                alerts.append(f"⚠ absente de {s}")
+        row_out["alerte"] = "; ".join(alerts)
+        if alerts:
+            console_alerts.append(f"  ⚠️  {super_classe} : {row_out['alerte']} ({total_classe} instance(s) au total)")
+        rows.append(row_out)
+
+    out = pd.DataFrame(rows).sort_values("ecart_max_pct_pts", ascending=False)
+    out.to_excel(writer, sheet_name="Répartition classes x split", index=False)
+    return console_alerts
+
+
 def run_diagnostic(
     raw_dir: str = RAW_DIR_DEFAULT,
     split_dir: str = SPLIT_DIR_DEFAULT,
@@ -500,18 +647,47 @@ def run_diagnostic(
         return ""
 
     df_items = pd.DataFrame(items)
+    # Feuilles agrégées par SUPER-CLASSE (Par super-classe, Par collecte, Par
+    # split, Répartition classes x split) : une instance EXCLUDE n'est par
+    # construction jamais vue à l'entraînement, elle n'a donc pas sa place
+    # dans un diagnostic de composition/équilibre de ce qui EST entraîné -
+    # demande du 03/09/2026, qui remplace le choix d'inclusion précédent.
+    # "Items" (dump exhaustif) et "Par classe brute" (recoupement avec
+    # dataset_audit.py, qui n'a lui-même aucune notion d'exclusion) restent
+    # sur df_items complet - voir leurs docstrings respectifs.
+    df_stats = df_items[~df_items["est_exclue"]] if "est_exclue" in df_items.columns else df_items
+    n_exclues_stats = len(df_items) - len(df_stats)
+    if n_exclues_stats:
+        print(f"  ℹ️  {n_exclues_stats} instance(s) EXCLUDE retirée(s) des feuilles agrégées par "
+              f"super-classe (Par super-classe/Par collecte/Par split/Répartition classes x split) - "
+              f"toujours comptées dans 'Résumé' et listées dans 'Items'.")
+
+    n_indisponible = sum(1 for it in items if it["split"] == "indisponible")
+    if n_indisponible == len(items):
+        print("  ℹ️  Aucun item n'a de split connu (voir message plus haut) - les feuilles \"Par split\" "
+              "et \"Répartition classes x split\" seront donc peu utiles (tout retombe dans "
+              "'indisponible'). Lance data_pipeline.py (au moins l'étape split) avant de rejuger un "
+              "éventuel déséquilibre.")
 
     output_xlsx = str(output_xlsx)
     Path(output_xlsx).parent.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(output_xlsx, engine="openpyxl") as writer:
         _write_summary_sheet(writer, items, counters, raw_dir, gsd_fixe_cm_px)
         df_items.to_excel(writer, sheet_name="Items", index=False)
-        _write_per_class_sheet(writer, df_items)
-        _write_per_batch_sheet(writer, df_items)
+        _write_per_class_sheet(writer, df_stats)
+        _write_per_batch_sheet(writer, df_stats)
         _write_per_raw_class_sheet(writer, df_items)
+        _write_per_split_sheet(writer, df_stats)
+        split_alerts = _write_class_by_split_sheet(writer, df_stats)
 
     print(f"\n[SUCCÈS] {len(items)} item(s) exporté(s) : {output_xlsx}")
-    print(f"    Feuilles : Résumé, Items, Par super-classe, Par collecte, Par classe brute")
+    print(f"    Feuilles : Résumé, Items, Par super-classe, Par collecte, Par classe brute, "
+          f"Par split, Répartition classes x split")
+    if split_alerts:
+        print(f"\n⚠️  {len(split_alerts)} classe(s) totalement absente(s) de val et/ou test "
+              f"(impossible à évaluer sur ce split) :")
+        for msg in split_alerts:
+            print(msg)
     return output_xlsx
 
 

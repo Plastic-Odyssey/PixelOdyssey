@@ -1,0 +1,54 @@
+# PixelOdyssey - Registre des capteurs drone connus, pour le pipeline "application"
+# (src/application/) - géolocalisation directe à partir des métadonnées EXIF/XMP.
+#
+# Principe : un capteur est identifié par le couple (Make, Model) tel qu'écrit
+# dans l'EXIF de la photo (tags standards `Make`/`Model`) - PAS le nom
+# commercial du drone, qui peut différer du nom du module caméra. Ajouter un
+# nouveau drone = ajouter une entrée ici, jamais modifier le code
+# (src/application/sensor_config.py ne fait que lire ce fichier), même
+# principe que config/data_config.yaml pour la taxonomie de classes.
+#
+# `sensor_width_mm`/`sensor_height_mm` sont dérivés de la fiche technique du
+# capteur (pixel_size_um x résolution native), PAS mesurés sur une photo
+# précise - une photo recadrée/redimensionnée reste correcte : la formule GSD
+# (voir geolocation.py) utilise la largeur RÉELLE de l'image (lue sur le
+# fichier), la largeur du capteur ne sert qu'à fixer l'échelle physique.
+#
+# `max_pitch_deviation_deg` : tolérance au nadir (0 = caméra parfaitement
+# verticale) avant qu'une photo soit flaguée/exclue par geolocation.py - la
+# projection "vue du dessus plate" utilisée ici (voir décision terrain plat du
+# 04/09/2026) devient de moins en moins valide à mesure que l'inclinaison
+# réelle de la caméra s'écarte du nadir. Valeur choisie par prudence, PAS
+# mesurée empiriquement (l'écart réel observé sur un échantillon de 3 photos
+# DJI Air 2S allait de 0° à 5° - voir journal_decisions_pipeline.md,
+# entrée du 04/09/2026) : à resserrer ou desserrer une fois plus de photos
+# réelles observées.
+
+sensors:
+  DJI:
+    FC3411:
+      # Nom commercial : DJI Air 2S (le module caméra "FC3411" est le seul
+      # identifiant fiable en EXIF - "Mavic Air 2S" est une confusion
+      # courante avec le "Mavic Air 2", drone différent).
+      label: "DJI Air 2S"
+      # Vérifié le 04/09/2026 : spec officielle DJI (1" CMOS, 20MP,
+      # pixel 2.4µm) - voir https://dronespec.dronedesk.io/dji-air-2s
+      pixel_size_um: 2.4
+      native_width_px: 5472
+      native_height_px: 3648
+      # sensor_width_mm = 5472 * 2.4 / 1000 = 13.1328 mm
+      # sensor_height_mm = 3648 * 2.4 / 1000 = 8.7552 mm
+      sensor_width_mm: 13.1328
+      sensor_height_mm: 8.7552
+      max_pitch_deviation_deg: 5.0
+
+  # Delair : matériel annoncé le 04/09/2026, modèle exact pas encore connu -
+  # AUCUNE entrée ajoutée tant qu'un vrai fichier photo (avec ses tags
+  # EXIF Make/Model réels) n'a pas été fourni pour vérification. Ajouter une
+  # entrée à l'aveugle depuis une fiche technique générique risquerait une
+  # GSD silencieusement fausse - voir la même règle "vérifier avant de
+  # supposer" déjà appliquée partout ailleurs dans ce projet.
+  # De plus, un autre constructeur qu'DJI n'écrit très probablement PAS le
+  # même schéma de métadonnées XMP (le bloc `drone-dji:*` est propriétaire) -
+  # voir exif_metadata.py, qui structure déjà l'extraction par adaptateur de
+  # constructeur pour cette raison, pas seulement pour la fiche capteur.

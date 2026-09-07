@@ -77,7 +77,7 @@ from src.training.training_report import generate_report
 # Le suffixe "-seg" est obligatoire : ce sont les variantes segmentation
 # (les seules pertinentes ici, PixelOdyssey délimite des masques de déchets,
 # pas juste des boîtes).
-MODEL_WEIGHTS = "yolo11n-seg.pt"   # <-- change UNIQUEMENT cette ligne pour tester un autre modèle
+MODEL_WEIGHTS = "yolo11m-seg.pt"   # <-- change UNIQUEMENT cette ligne pour tester un autre modèle
 # Exemples à tester : "yolov8n-seg.pt", "yolov8s-seg.pt", "yolo11s-seg.pt", "yolo11m-seg.pt"
 #
 # Note sur "nano vs medium" : plus de capacité n'aide QUE si la faiblesse observée est un souci
@@ -92,9 +92,11 @@ MODEL_WEIGHTS = "yolo11n-seg.pt"   # <-- change UNIQUEMENT cette ligne pour test
 EPOCHS = 100
 IMGSZ = 640
 BATCH = 16          # -1 = laisse Ultralytics choisir automatiquement selon la VRAM dispo
-PATIENCE = 20       # arrêt anticipé si aucune amélioration après N epochs
+PATIENCE = 20        # arrêt anticipé si aucune amélioration après N epochs (0 = désactivé, va au bout des EPOCHS)
 DEVICE = 0          # 0 = 1er GPU ; "cpu" = CPU ; "0,1" = multi-GPU
-WORKERS = 4
+WORKERS = 1         # réduit de 4 à 2 le 04/09/2026 suite à un crash WinError 1450
+                    # ("ressources système insuffisantes") pendant la validation du run
+                    # yolo11s+tuned_recipe - sature moins les workers DataLoader sous Windows
 
 # --- Augmentation -------------------------------------------------------------
 #

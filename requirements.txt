@@ -12,3 +12,17 @@ shapely
 PyYAML
 rasterio
 Pillow
+
+# Ajouté le 06/09/2026 : similarité visuelle pré-entraînée pour le
+# dédoublonnage inter-photos (src/application/visual_similarity.py) - voir
+# src/application/dedup.py pour le diagnostic qui motive cet ajout (l'IoU
+# géométrique seul ne suffit pas sur données réelles, bruit de
+# géoréférencement direct). `torch` n'est pas listé séparément : déjà tiré
+# par `ultralytics`.
+# DEVENU OPTIONNEL le 07/09/2026 : `--dedup-method` par défaut est repassé à
+# `iou` (100% local) pour l'usage terrain, l'appel réseau à HuggingFace
+# (même modèle en cache) étant trop lent sans connexion fiable - voir
+# journal_decisions_pipeline.md (07/09/2026). `transformers` reste requis
+# UNIQUEMENT si `--dedup-method visual` est utilisé explicitement ; à retirer
+# de cet environnement si ce mode n'est plus prévu du tout.
+transformers
