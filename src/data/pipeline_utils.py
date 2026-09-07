@@ -3,12 +3,18 @@
 """
 PixelOdyssey - Utilitaires partagés par les étapes incrémentales du pipeline.
 
-Généralisé à partir de ce qui vivait uniquement dans data_pipeline.py (étape 4).
-Chaque étape incrémentale (2_split_dataset, 4_sliced_dataset, et plus tard
-3_augmented_dataset une fois implémentée) a le même besoin : ne pas retraiter
-un parent déjà présent, SAUF si la configuration qui a produit ce qui existe a
-changé depuis - auquel cas continuer silencieusement mélangerait deux versions
-différentes des données dans le même dossier.
+Chaque étape incrémentale (2_split_dataset, 3_augmented_dataset,
+4_sliced_dataset) a le même besoin : ne pas retraiter un parent déjà présent,
+SAUF si la configuration qui a produit ce qui existe a changé depuis - auquel
+cas continuer silencieusement mélangerait deux versions différentes des
+données dans le même dossier.
+
+Constantes :
+    MANIFEST_FILENAME  Nom par défaut du fichier manifeste de cache incrémental.
+
+Exemple :
+    from src.data.pipeline_utils import ensure_cache_is_safe
+    ensure_cache_is_safe(output_dir, current_params, force=False, wipe_subdirs=["images", "labels"])
 """
 
 import hashlib

@@ -4,20 +4,41 @@
 PixelOdyssey - Découverte des images parentes dans le dataset brut annoté.
 
 Logique partagée par l'étape 2 (split_dataset.py) et par tout outil ayant
-besoin de parcourir `1_annotated_dataset` (ex: le checker pré-slicing).
+besoin de parcourir 1_annotated_dataset (ex: le checker pré-slicing).
 
-Entrée : chemin du dossier racine du dataset annoté brut.
-Sortie : liste de dicts décrivant chaque image parente trouvée et son label.
+Constantes :
+    VALID_IMG_EXTS  Extensions d'image reconnues comme image parente valide.
 
 Exemple :
     from src.data.raw_dataset import collect_parent_images
     parents = collect_parent_images("data/1_annotated_dataset")
+
+Entrée : chemin du dossier racine du dataset annoté brut.
+Sortie : liste de dicts décrivant chaque image parente trouvée et son label.
 """
 
 from pathlib import Path
 from typing import Dict, List
 
 VALID_IMG_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+
+
+def site_of_batch(batch_name: str) -> str:
+    """Extrait le code de SITE à partir du nom de lot ("batch", voir
+    collect_parent_images) - convention du projet : le code de site est le premier
+    token avant la première espace du nom de dossier de premier niveau sous raw_dir.
+    Ex: "SL 11-16" -> "SL", "SL 6-10_26-27" -> "SL", "SB 1" -> "SB", "A LEG1_1" -> "A".
+
+    Un même site couvre plusieurs lots ("SL 11-16", "SL 17-25", "SL 6-10_26-27" sont
+    tous le site Santa Luzia) - c'est la distinction utile pour filtrer un entraînement
+    dédié à un site (voir split_dataset.py --site), alors que "batch" reste la
+    granularité utilisée pour la stratification du split et le data.yaml local.
+
+    Ne dépend d'aucune liste figée de sites connus : tout nouveau site respectant
+    cette même convention de nommage ("<CODE> <reste du nom>") est reconnu sans
+    modifier ce fichier. Si un lot ne contient aucune espace, le nom entier est
+    retourné tel quel (aucun découpage possible) plutôt que de lever une erreur."""
+    return batch_name.split(" ", 1)[0]
 
 
 def find_corresponding_label(img_path: Path) -> Path:

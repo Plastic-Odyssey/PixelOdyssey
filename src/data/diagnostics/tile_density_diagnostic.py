@@ -55,7 +55,7 @@ import matplotlib
 matplotlib.use("Agg")  # sauvegarde en fichier uniquement, jamais d'affichage interactif requis
 import matplotlib.pyplot as plt
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 from src.data.slice_dataset import BASE_DIR, SLICED_DIR, SPLITS  # source partagée, pas de redéfinition locale
 
 OUTPUT_PNG_DEFAULT = os.path.join(BASE_DIR, "tile_density_histogram.png")

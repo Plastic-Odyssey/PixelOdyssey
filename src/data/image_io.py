@@ -10,14 +10,17 @@ rasterio/GDAL, qui lit la bande principale sans se laisser piéger par des
 pages d'aperçu de taille différente (pyramide d'orthomosaïque) ; les autres
 formats (jpg, png...) sont lus via cv2.imread.
 
-Entrée : chemin vers une image (jpg/png/tif/tiff).
-Sortie : tableau numpy (H, W, 3) en BGR uint8, ou None si illisible.
+Constantes :
+    _TIFF_EXTS  Extensions routées vers le chargeur rasterio plutôt que cv2.
 
 Exemple :
     from src.data.image_io import load_image_bgr
     img = load_image_bgr("lot/images/photo1.jpg")
     if img is not None:
         h, w = img.shape[:2]
+
+Entrée : chemin vers une image (jpg/png/tif/tiff).
+Sortie : tableau numpy (H, W, 3) en BGR uint8, ou None si illisible.
 """
 
 from pathlib import Path
@@ -47,7 +50,7 @@ def _load_tiff_bgr_via_rasterio(img_path: Path) -> Optional[np.ndarray]:
     except rasterio.errors.RasterioIOError:
         return None
 
-    # rasterio retourne (bandes, H, W) en ordre RGB -> (H, W, bandes) BGR, convention du reste du module.
+    # rasterio retorne (bandes, H, W) en ordre RGB -> (H, W, bandes) BGR, convention du reste du module.
     rgb = np.transpose(data, (1, 2, 0))
     bgr = rgb[:, :, ::-1].copy()
 

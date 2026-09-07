@@ -77,7 +77,7 @@ from src.training.training_report import generate_report
 # Le suffixe "-seg" est obligatoire : ce sont les variantes segmentation
 # (les seules pertinentes ici, PixelOdyssey délimite des masques de déchets,
 # pas juste des boîtes).
-MODEL_WEIGHTS = "yolo11m-seg.pt"   # <-- change UNIQUEMENT cette ligne pour tester un autre modèle
+MODEL_WEIGHTS = "yolo11n-seg.pt"   # <-- change UNIQUEMENT cette ligne pour tester un autre modèle
 # Exemples à tester : "yolov8n-seg.pt", "yolov8s-seg.pt", "yolo11s-seg.pt", "yolo11m-seg.pt"
 #
 # Note sur "nano vs medium" : plus de capacité n'aide QUE si la faiblesse observée est un souci
@@ -94,7 +94,7 @@ IMGSZ = 640
 BATCH = 16          # -1 = laisse Ultralytics choisir automatiquement selon la VRAM dispo
 PATIENCE = 20        # arrêt anticipé si aucune amélioration après N epochs (0 = désactivé, va au bout des EPOCHS)
 DEVICE = 0          # 0 = 1er GPU ; "cpu" = CPU ; "0,1" = multi-GPU
-WORKERS = 1         # réduit de 4 à 2 le 04/09/2026 suite à un crash WinError 1450
+WORKERS = 4         # réduit de 4 à 2 le 04/09/2026 suite à un crash WinError 1450
                     # ("ressources système insuffisantes") pendant la validation du run
                     # yolo11s+tuned_recipe - sature moins les workers DataLoader sous Windows
 
@@ -138,8 +138,8 @@ FLIPUD = 0.5        # défaut Ultralytics = 0.0. FLIPLR est à 0.5 par défaut (
 # VAL - décalage val/test à comprendre avant de remonter cette valeur. Remis à 0.0 le temps d'isoler
 # proprement `cls_pw` (voir ci-dessous) contre `ref_split_corrige` - PAS empilé sur copy_paste tant que
 # ce dernier n'est pas confirmé comme un progrès réel. Voir journal pour le détail complet.
-COPY_PASTE = 0.0
-COPY_PASTE_MODE = "flip"  # explicite : c'est le défaut Ultralytics, mais la distinction flip/mixup
+COPY_PASTE = 0
+COPY_PASTE_MODE = "mixup"  # explicite : c'est le défaut Ultralytics, mais la distinction flip/mixup
                            # est le coeur du correctif ci-dessus - jamais la laisser implicite ici.
                            # Sans effet tant que COPY_PASTE=0.0 (voir PAUSE ci-dessus).
 
@@ -160,7 +160,7 @@ COPY_PASTE_MODE = "flip"  # explicite : c'est le défaut Ultralytics, mais la di
 # ("sans Debris_Divers", voir --config/CONFIG_PATH ci-dessus et le journal) sans empiler deux
 # changements non encore prouvés. Remettre à 0.5 (ou la valeur qui sera retenue) une fois cls_pw
 # évalué, pour un run qui isole CETTE SEULE variable contre `ref_split_corrige`.
-CLS_PW = 0.0
+CLS_PW = 1
 
 # scale (défaut 0.5, soit un zoom aléatoire ~0.5x-1.5x) : pas changé ici. C'est le paramètre qui
 # répond à l'écart entre le GSD actuel (~0.5 cm/px) et un futur matériel (~1 cm/px, facteur ~2x) -
@@ -219,7 +219,7 @@ OVERLAP_MASK = False
 # --- Étiquette libre pour retrouver ce run dans output/runs/ ---------------
 # Sert uniquement à la lisibilité du nom de dossier - mets ce que tu veux,
 # par ex. "baseline", "test_yolov8s", "sans_class_nonplastique", etc.
-RUN_TAG = "overlap_mask_off"
+RUN_TAG = "baseline"
 
 # ============================================================================
 # 2. Orchestration (nommage, non-écrasement, rapport) - pas besoin d'y toucher

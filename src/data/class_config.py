@@ -20,15 +20,19 @@ normalisation et résolution des alias, dans AUCUNE entrée de
 `class_taxonomy` (voir raw_dataset_checker.py, qui fait cette vérification
 sur les données réelles).
 
-Entrée : config/data_config.yaml (class_taxonomy, class_aliases, names) et,
-pour un lot donné, son propre data.yaml local.
-Sortie : class_taxonomy résolue (nom normalisé -> ID de super-classe ou
-EXCLUDE) et target_names (ID de super-classe -> nom).
+Constantes :
+    DEFAULT_CLASS_CONFIG_PATH  Chemin par défaut de config/data_config.yaml.
+    EXCLUDE                    Valeur spéciale dans class_taxonomy : classe toujours ignorée.
 
 Exemple :
     from src.data.class_config import load_class_config, resolve_class_name
     taxonomy, target_names = load_class_config()
     super_class_id = resolve_class_name("Bouées", taxonomy)
+
+Entrée : config/data_config.yaml (class_taxonomy, class_aliases, names) et,
+pour un lot donné, son propre data.yaml local.
+Sortie : class_taxonomy résolue (nom normalisé -> ID de super-classe ou
+EXCLUDE) et target_names (ID de super-classe -> nom).
 """
 
 import unicodedata
@@ -118,12 +122,11 @@ def load_global_class_options(
     On relit donc directement la section `class_taxonomy` du YAML (PAS `class_aliases`) et on
     garde l'orthographe telle qu'écrite comme clé - c'est explicitement "l'orthographe de
     référence" par convention de ce fichier (voir son en-tête). Les entrées `exclude` sont
-    omises (jamais un choix valide pour un bouton "Valider" - voir `_review_class_options`
-    dans review_false_positives.py, qui filtrait déjà ce cas côté table de résolution).
+    omises (jamais un choix valide pour un bouton "Valider").
 
     Entrée : chemin du référentiel projet (config/data_config.yaml par défaut).
     Sortie : liste de (nom_canonique, ID_super_classe_cible), dans l'ordre d'apparition du
-    YAML (déjà groupé par super-classe - voir les commentaires de class_taxonomy).
+    YAML (déjà groupé par super-classe).
     """
     config_path = Path(config_path)
     if not config_path.exists():
@@ -153,13 +156,12 @@ def assert_model_matches_taxonomy(
     Pourquoi c'est nécessaire : un modèle entraîné (best.pt) embarque son propre
     dict id -> nom, figé au moment de l'entraînement (`model.names`, via
     `tiled_inference.make_ultralytics_predict_fn`). Si la taxonomie a changé depuis
-    (classe retirée/renommée, IDs renumérotés - voir le journal de décisions), l'ID
-    qu'il prédit ne correspond PLUS forcément à la même classe dans `target_names`
-    courant : un même entier peut désigner une classe différente avant/après le
-    changement. Sans ce garde-fou, une prédiction sous ID X d'un ancien modèle serait
-    silencieusement réinterprétée comme la classe X ACTUELLE - potentiellement une
-    tout autre classe - et pourrait être écrite comme telle dans un export (ex:
-    panier A de label_review.py), sans qu'aucune erreur ne le signale.
+    (classe retirée/renommée, IDs renumérotés), l'ID qu'il prédit ne correspond PLUS
+    forcément à la même classe dans `target_names` courant : un même entier peut
+    désigner une classe différente avant/après le changement. Sans ce garde-fou, une
+    prédiction sous ID X d'un ancien modèle serait silencieusement réinterprétée
+    comme la classe X ACTUELLE - potentiellement une tout autre classe - et pourrait
+    être écrite comme telle dans un export, sans qu'aucune erreur ne le signale.
 
     Entrée : `model_names` (dict du modèle chargé), `target_names` (dict de
     config/data_config.yaml courant), `model_label` (chemin/nom du modèle, pour un

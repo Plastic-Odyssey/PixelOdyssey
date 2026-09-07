@@ -9,27 +9,25 @@ l'INFÉRENCE par tuile (src/review/), pour garantir que les deux voient
 exactement les mêmes fenêtres (même tile_size, même stride, même règle de
 bord) plutôt que deux implémentations qui pourraient diverger silencieusement.
 
-Entrée : dimensions de l'image (img_w, img_h) et paramètres de tuilage
-(tile_size, stride).
-Sortie : itérateur de tuples (x_start, y_start, x_end, y_end).
+Contient aussi `most_square_grid`/`iter_grid_windows` : découpage en grille
+SANS chevauchement en un nombre EXACT de morceaux (contrairement à
+`iter_tile_windows`, pensé pour un balayage glissant AVEC recouvrement à
+l'entraînement) - utilisé par src/review/split_for_cvat.py pour fragmenter
+une orthomosaïque trop lourde pour CVAT en plusieurs morceaux gérables.
+`min_pieces_for_pixel_cap` complète ces deux fonctions : calcule le nombre
+minimal de morceaux nécessaire pour respecter un plafond de pixels par
+morceau (ex : la limite d'import CVAT) - à appeler AVANT `most_square_grid`
+pour combiner les deux contraintes ("le plus carré possible" ET "sous le
+plafond CVAT") sans qu'elles se contredisent.
 
 Exemple :
     from src.data.tiling_geometry import iter_tile_windows
     for x0, y0, x1, y1 in iter_tile_windows(img_w=4000, img_h=3000, tile_size=640, stride=512):
         tile = img[y0:y1, x0:x1]
 
-Contient aussi `most_square_grid`/`iter_grid_windows` : découpage en grille
-SANS chevauchement en un nombre EXACT de morceaux (contrairement à
-`iter_tile_windows`, pensé pour un balayage glissant AVEC recouvrement à
-l'entraînement) - utilisé par src/review/split_for_cvat.py (étape de
-découpage préalable et indépendante de la revue, voir sa docstring et le
-journal du 31/08/2026) pour fragmenter une orthomosaïque trop lourde pour
-CVAT en plusieurs morceaux gérables.
-`min_pieces_for_pixel_cap` complète ces deux fonctions : calcule le nombre
-minimal de morceaux nécessaire pour respecter un plafond de pixels par
-morceau (ex : la limite d'import CVAT) - à appeler AVANT `most_square_grid`
-pour combiner les deux contraintes ("le plus carré possible" ET "sous le
-plafond CVAT") sans qu'elles se contredisent.
+Entrée : dimensions de l'image (img_w, img_h) et paramètres de tuilage
+(tile_size, stride).
+Sortie : itérateur de tuples (x_start, y_start, x_end, y_end).
 """
 
 import math

@@ -48,12 +48,27 @@ Variante de donnée brute (ex: dataset corrigé par src/review/review_false_posi
        défaut, pour la même raison (ne jamais écraser silencieusement 2_split_dataset/3_augmented_dataset/
        4_sliced_dataset avec une donnée source différente). --config et --raw-dir sont indépendants et
        combinables (ex: dataset corrigé ET sans Debris_Divers à la fois).
+
+Variante de site (ajouté le 07/09/2026, ex: entraînement dédié Santa Luzia) :
+    python src/data/data_pipeline.py --site SL --suffix _SL
+    -> même mécanisme --suffix, mais filtre les images parentes retenues à l'étape 1 par
+       code de site (SL, SB, A aujourd'hui, L pour Loango à venir - voir
+       raw_dataset.site_of_batch pour la convention de nommage : le 1er token du nom de
+       lot avant l'espace). Écrit dans 2_split_dataset_SL/3_augmented_dataset_SL/
+       4_sliced_dataset_SL, aucun fichier partagé avec le dataset complet (comme pour
+       --config/--raw-dir) - 1_annotated_dataset (la donnée brute source, TOUS sites
+       confondus) reste commun, seul le split résultant change. Plusieurs sites
+       combinables (--site SL,A). --config/--raw-dir/--site sont tous indépendants et
+       combinables entre eux. Une fois le dataset filtré généré, crée un
+       config/data_config_SL.yaml (copie de data_config.yaml, seul `path:` change vers
+       4_sliced_dataset_SL) pour lancer l'entraînement (voir train.py --config).
 """
 
 import argparse
 import os
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.data.augment_dataset import AUGMENTED_DIR, run_augment
@@ -67,23 +82,28 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
 
 
-def _validate_config_suffix_pairing(config_path: str, suffix: str, raw_dir: str) -> None:
-    """Garde-fou : --config et/ou --raw-dir non défaut sans --suffix écraserait le dataset
-    principal (2_split_dataset/3_augmented_dataset/4_sliced_dataset) avec une taxonomie et/ou
-    une donnée source différente - jamais silencieux, on arrête tout de suite plutôt que de
-    laisser data_pipeline.py trancher à la place de l'utilisateur."""
+def _validate_config_suffix_pairing(
+    config_path: str, suffix: str, raw_dir: str, site_filter: Optional[List[str]] = None,
+) -> None:
+    """Garde-fou : --config/--raw-dir/--site non défaut sans --suffix écraserait le dataset
+    principal (2_split_dataset/3_augmented_dataset/4_sliced_dataset) avec une taxonomie, une
+    donnée source et/ou un sous-ensemble de sites différent - jamais silencieux, on arrête
+    tout de suite plutôt que de laisser data_pipeline.py trancher à la place de l'utilisateur."""
     non_default = []
     if str(Path(config_path).resolve()) != str(CONFIG_PATH.resolve()):
         non_default.append(f"--config pointe vers une taxonomie non-défaut ({config_path})")
     if str(Path(raw_dir).resolve()) != str(Path(RAW_DIR).resolve()):
         non_default.append(f"--raw-dir pointe vers une donnée source non-défaut ({raw_dir})")
+    if site_filter:
+        non_default.append(f"--site filtre sur {','.join(site_filter)} (pas le dataset complet)")
 
     if non_default and not suffix:
         raise RuntimeError(
             "🛑 " + " ET ".join(non_default) + " mais --suffix est vide : ça écrirait dans les "
             "MÊMES dossiers que le dataset principal (2_split_dataset/3_augmented_dataset/"
             "4_sliced_dataset), avec une donnée différente - dataset principal écrasé. Fournis "
-            "--suffix (ex: --suffix _corrected) pour écrire dans des dossiers parallèles dédiés."
+            "--suffix (ex: --suffix _SL pour un entraînement dédié Santa Luzia) pour écrire dans "
+            "des dossiers parallèles dédiés."
         )
 
 
@@ -115,13 +135,17 @@ def _post_stage_check(label: str, base_path: str) -> None:
 
 def run_full_pipeline(
     force: bool = False, config_path: str = str(CONFIG_PATH), suffix: str = "", raw_dir: str = RAW_DIR,
-    balance_by: str = "images",
+    balance_by: str = "images", site_filter: Optional[List[str]] = None,
 ) -> None:
     """`config_path`/`suffix` : voir la docstring du module ("Variante de taxonomie"). `raw_dir` :
     voir "Variante de donnée brute" (ex: 1bis_corrected_annotation produit par
-    review_false_positives.py). Défauts inchangés (config/donnée principales, aucun suffixe) ->
-    comportement strictement identique à avant l'ajout de ces paramètres."""
-    _validate_config_suffix_pairing(config_path, suffix, raw_dir)
+    review_false_positives.py). `site_filter` (ajouté le 07/09/2026, voir "Variante de site"
+    dans la docstring du module) : entraînement dédié à un sous-ensemble de sites (ex: Santa
+    Luzia seule), même mécanisme --suffix que les deux variantes ci-dessus - transmis tel quel
+    à split_dataset.py (voir raw_dataset.site_of_batch pour la convention de code de site).
+    Défauts inchangés (config/donnée/sites principaux, aucun suffixe) -> comportement
+    strictement identique à avant l'ajout de ces paramètres."""
+    _validate_config_suffix_pairing(config_path, suffix, raw_dir, site_filter)
     split_dir = SPLIT_DIR + suffix
     augmented_dir = AUGMENTED_DIR + suffix
     sliced_dir = SLICED_DIR + suffix
@@ -150,7 +174,7 @@ def run_full_pipeline(
     print("=" * 70)
     run_split(
         force=force, raw_dir=raw_dir, split_dir=split_dir, class_config_path=config_path,
-        run_confirmation=run_confirmation, balance_by=balance_by,
+        run_confirmation=run_confirmation, balance_by=balance_by, site_filter=site_filter,
     )
     _post_stage_check(Path(split_dir).name, split_dir)
 
@@ -203,8 +227,8 @@ if __name__ == "__main__":
         "--suffix", default="",
         help="Suffixe ajouté aux 3 dossiers de sortie (2_split_dataset<suffix>, "
              "3_augmented_dataset<suffix>, 4_sliced_dataset<suffix>) - obligatoire dès que "
-             "--config et/ou --raw-dir diffère du défaut, pour ne jamais écraser le dataset "
-             "principal.",
+             "--config, --raw-dir et/ou --site diffère du défaut, pour ne jamais écraser le "
+             "dataset principal.",
     )
     parser.add_argument(
         "--balance-by", choices=["images", "items"], default="images",
@@ -213,11 +237,19 @@ if __name__ == "__main__":
              "par nombre d'images (utile pour un dataset mono-classe ou très hétérogène en "
              "densité de déchets par image).",
     )
+    parser.add_argument(
+        "--site", default=None,
+        help="Filtre par code de site (ex: SL, SB, A - L à venir pour Loango), un ou "
+             "plusieurs séparés par virgule (ex: SL,A) - voir 'Variante de site' dans la "
+             "docstring du module. Défaut : aucun filtre, tous les sites. Fournis AUSSI "
+             "--suffix dès que --site est utilisé.",
+    )
     args = parser.parse_args()
+    site_filter = [s.strip() for s in args.site.split(",")] if args.site else None
     try:
         run_full_pipeline(
             force=args.force, config_path=args.config, suffix=args.suffix, raw_dir=args.raw_dir,
-            balance_by=args.balance_by,
+            balance_by=args.balance_by, site_filter=site_filter,
         )
     except RuntimeError as e:
         print(str(e))
