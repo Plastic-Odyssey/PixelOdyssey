@@ -19,12 +19,12 @@ les 2 feuilles "Par split"/"Répartition classes x split" déjà ajoutées à
 questions différentes, un déséquilibre de classe correct peut coexister avec
 une distribution de densité très différente entre splits.
 
-Lien direct avec le chantier `overlap_mask` (voir journal 28/08/2026) :
-c'est précisément dans les tuiles à forte densité (queue de distribution à
-droite de cet histogramme) qu'`overlap_mask=True` (défaut Ultralytics) fusionne
-les masques qui se chevauchent et efface les petits objets recouverts - ce
-diagnostic chiffre combien de tuiles sont réellement concernées par ce
-mécanisme, plutôt que de le supposer.
+Lien direct avec `overlap_mask` (voir train.py) : c'est précisément dans les
+tuiles à forte densité (queue de distribution à droite de cet histogramme)
+qu'`overlap_mask=True` (défaut Ultralytics) fusionne les masques qui se
+chevauchent et efface les petits objets recouverts - ce diagnostic chiffre
+combien de tuiles sont réellement concernées par ce mécanisme, plutôt que de
+le supposer.
 
 Une tuile écrit TOUJOURS un fichier de label (voir slicer.py,
 `f.writelines(tile_labels)` même si `tile_labels` est vide) - une tuile de

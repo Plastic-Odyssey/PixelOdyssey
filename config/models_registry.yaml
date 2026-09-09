@@ -44,3 +44,31 @@ models:
     description: "Mono-classe (Dechet_Plastique), yolo11s-seg, tuned_recipe (degrees=180/flipud=0.5), meilleur F1 test (0.532) parmi les runs mono-classe au 04/09/2026"
     date: "2026-09-04"
     taxonomy_config: "config/data_config_mono_class.yaml"
+  - name: "mono_class_best"
+    weights_path: "output/runs/reference_monoclasse_yolo11n-seg_20260908_143032/weights/best.pt"
+    description: "Mono-classe (Dechet_Plastique), yolo11n-seg, reference_monoclasse (degrees=180/flipud=0.5), F1 test (0.499)"
+    date: "2026-09-08"
+    taxonomy_config: "config/data_config_mono_class.yaml"
+
+
+# Entrée ajoutée le 08/09/2026 : meilleur modèle multi-classe (7 classes,
+# config/data_config.yaml) disponible à cette date. Comparaison faite sur le
+# test set (rapport_metrics.json, splits.test.macro) entre tous les runs
+# entraînés sous la taxonomie 7-classes ACTUELLE (Bouteille, Flipflops,
+# Cagette, Bouee, Cordage_Filet, Bidon, Debris_Divers - vérifié via la liste
+# per_class de chaque run, pas seulement le chemin de data_config.yaml, qui
+# n'a pas changé de NOM mais dont le CONTENU a changé : plusieurs runs plus
+# anciens ont été entraînés sous une taxonomie 8-classes obsolète incluant
+# "Bouchon", désormais supprimée - ces runs-là ont été exclus de la
+# comparaison malgré des métriques brutes parfois plus hautes, car
+# incompatibles avec la taxonomie actuelle) :
+#   - ref_split_corrige (retenu) : F1 0.390, mAP50-95 0.208, precision 0.438,
+#     recall 0.363
+#   - test_all_on_multi : F1 0.371, mAP50-95 0.170
+#   - test_all_on_multi_pasteoff : F1 0.308, mAP50-95 0.140
+# Voir le journal de décisions (entrée du 08/09/2026) pour le détail.
+  - name: "multi_class_v1"
+    weights_path: "output/runs/ref_split_corrige_yolo11n-seg_20260828_015344/weights/best.pt"
+    description: "Multi-classe (7 classes), yolo11n-seg, ref_split_corrige, meilleur F1 test (0.390) parmi les runs multi-classe compatibles avec la taxonomie actuelle au 08/09/2026"
+    date: "2026-08-28"
+    taxonomy_config: "config/data_config.yaml"

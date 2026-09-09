@@ -3,34 +3,29 @@
 """
 PixelOdyssey - Diagnostic : d'où viennent les tuiles de fond (background) ?
 
-Contexte (voir échange du 07/09/2026, journal_decisions_pipeline.md) : Jame a
-mesuré, via `tile_density_diagnostic.py` (colonne "% vides"), une proportion
-de tuiles sans objet annoté de 47% en train, 55% en val, seulement 20% en
-test - et se demande si ce déséquilibre est problématique pour le rappel.
-
-Ce diagnostic répond à une question PRÉALABLE, sans laquelle la question de
-Jame ne peut pas avoir de réponse fiable : le pourcentage global de tuiles
-vides masque DEUX mécanismes complètement différents dans `slicer.py`, qui
-n'appellent pas le même levier de correction :
+Le pourcentage global de tuiles vides (mesuré par `tile_density_diagnostic.py`,
+colonne "% vides") masque DEUX mécanismes complètement différents dans
+`slicer.py`, qui n'appellent pas le même levier de correction :
 
 1. Une image PARENTE entièrement sans déchet (aucune annotation du tout) ->
    TOUTES ses tuiles sont gardées, sans aucun sous-échantillonnage.
 2. Une image parente qui contient PAR AILLEURS des objets -> une tuile vide
    sur 10 seulement est gardée (compteur roulant par image parente).
 
-Si le 47% de train est dominé par (1), le vrai levier est de sous-échantillonner
-les images parentes 100% fond (aucun garde-fou actuel dessus - un long
-transect entièrement sans déchet peut à lui seul produire des dizaines de
-tuiles). Si c'est (2) qui domine, le vrai levier est de baisser le ratio 1/10.
-Deviner sans mesurer risque de tirer sur le mauvais mécanisme.
+Si le taux de fond d'un split est dominé par (1), le vrai levier est de
+sous-échantillonner les images parentes 100% fond (aucun garde-fou actuel
+dessus - un long transect entièrement sans déchet peut à lui seul produire
+des dizaines de tuiles). Si c'est (2) qui domine, le vrai levier est de
+baisser le ratio 1/10. Deviner sans mesurer risque de tirer sur le mauvais
+mécanisme - d'où ce diagnostic.
 
 Note de fidélité : la détection "parent 100% fond" ci-dessous réutilise
 `PlasticImageSlicer._load_yolo_labels()` (avec img_w=img_h=1, les coordonnées
 YOLO étant déjà normalisées - un polygone dégénéré/invalide reste dégénéré/
 invalide à n'importe quelle échelle) plutôt que de réimplémenter séparément
 la même logique de validité de polygone - même risque de divergence
-silencieuse entre deux copies que celui déjà relevé pour `VALID_IMG_EXTS`
-(voir journal 24/08/2026).
+silencieuse entre deux copies que pour `VALID_IMG_EXTS` (partagé depuis
+raw_dataset.py plutôt que redéfini ici, pour la même raison).
 
 Entrée : `3_augmented_dataset/{images,labels}/<split>/` (niveau image parente,
 pour savoir si CHAQUE parent est 100% fond) + `4_sliced_dataset/{images,labels}/<split>/`

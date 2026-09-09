@@ -3,21 +3,20 @@
 """
 PixelOdyssey - Géolocalisation directe d'une photo drone brute (pipeline
 "application" - géoréférencement NAÏF par GPS+altitude+capteur, PAS une
-orthorectification photogrammétrique type WebODM - voir le compromis discuté
-et accepté le 04/09/2026, journal_decisions_pipeline.md).
+orthorectification photogrammétrique type WebODM - compromis délibéré : plus
+simple et plus rapide à produire, au prix d'une précision moindre que
+WebODM, acceptée pour ce cas d'usage - carte de densité, pas un relevé
+topographique de précision).
 
-Simplifications assumées explicitement (décisions du 04/09/2026, PAS des
-oublis) :
+Simplifications assumées explicitement (PAS des oublis) :
 - Terrain supposé PLAT (altitude AGL uniforme sur tout le batch) - pas de
-  correction de relief/marée. Confirmé acceptable par Jame pour ce cas
-  d'usage (carte de densité à l'échelle d'une plage, pas un relevé
-  topographique).
+  correction de relief/marée. Acceptable pour ce cas d'usage (carte de
+  densité à l'échelle d'une plage, pas un relevé topographique).
 - Caméra supposée NADIR PARFAIT pour la projection (pas de correction de
   perspective liée au tangage réel) - MAIS `pitch_within_tolerance()` permet
   de détecter/exclure les photos dont l'écart au nadir dépasse la tolérance
   du capteur (voir config/sensor_specs.yaml), plutôt que d'appliquer
-  aveuglément l'approximation partout. Écart réel observé sur l'échantillon
-  du 04/09/2026 : 0° à 5° selon la photo.
+  aveuglément l'approximation partout.
 - Terre plate localement (plan tangent, pas de projection cartographique
   formelle type UTM/pyproj) - valide à l'échelle d'une plage (centaines de
   mètres), pas d'une région entière. Si le besoin s'étend un jour à une zone
@@ -25,15 +24,14 @@ oublis) :
   `local_xy_to_lonlat` par une vraie projection (pyproj, déjà disponible via
   la dépendance rasterio) sans toucher au reste du pipeline.
 
-Convention du cap caméra (`gimbal_yaw_deg`) - À VALIDER EMPIRIQUEMENT dès que
-possible, voir note plus bas : 0° = nord vrai, angle croissant dans le sens
-HORAIRE, plage [-180, 180]. Cette convention est celle documentée
-officiellement par DJI pour l'attitude de l'appareil (DJIAttitude.yaw, SDK
-Mobile DJI : "0 corresponds to a True North heading" / "Yawing clockwise will
-increase yaw value" - voir source en bas de fichier) - appliquée ICI par
-extension à `GimbalYawDegree` (même écosystème DJI, valeurs observées sur
-l'échantillon du 04/09/2026 cohérentes avec cette plage), PAS une
-confirmation officielle publiée spécifiquement pour ce tag XMP précis.
+Convention du cap caméra (`gimbal_yaw_deg`) - question ouverte, à valider
+empiriquement dès que possible (voir note plus bas) : 0° = nord vrai, angle
+croissant dans le sens HORAIRE, plage [-180, 180]. Cette convention est celle
+documentée officiellement par DJI pour l'attitude de l'appareil
+(DJIAttitude.yaw, SDK Mobile DJI : "0 corresponds to a True North heading" /
+"Yawing clockwise will increase yaw value" - voir source en bas de fichier) -
+appliquée ICI par extension à `GimbalYawDegree` (même écosystème DJI), PAS
+une confirmation officielle publiée spécifiquement pour ce tag XMP précis.
 **Validation empirique recommandée dès qu'un vrai batch de photos
 séquentielles avec recouvrement est disponible** : vérifier que deux photos
 consécutives projettent bien des empreintes adjacentes/superposées comme

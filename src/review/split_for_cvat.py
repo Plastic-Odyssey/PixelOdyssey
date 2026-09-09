@@ -7,19 +7,18 @@ PixelOdyssey - Découpage d'une orthomosaïque en grille sous la limite CVAT.
 d'inférence, pas d'annotation, pas de label ici : uniquement un découpage
 géométrique en grille SANS chevauchement, la plus carrée possible pour le
 nombre de morceaux retenu (tiling_geometry.most_square_grid), chaque
-morceau restant sous CVAT_MAX_PIXELS (150 000 000 px - constaté par
+morceau restant sous CVAT_MAX_PIXELS (50 000 000 px - constaté par
 l'utilisateur, au-delà CVAT refuse l'import).
 
-Pourquoi une étape séparée plutôt qu'un découpage intégré à la revue (comme
-avant le 31/08/2026, voir journal_decisions_pipeline.md) : faire
-l'inférence + la revue sur l'orthomosaïque ENTIÈRE puis ne fragmenter qu'à
-l'écriture obligeait à attendre l'inférence complète (potentiellement
-longue sur une grosse mosaïque) ET, depuis l'introduction de l'écriture
+Pourquoi une étape séparée plutôt qu'un découpage intégré à la revue :
+faire l'inférence + la revue sur l'orthomosaïque ENTIÈRE, puis ne
+fragmenter qu'à l'écriture, forcerait à attendre l'inférence complète
+(potentiellement longue sur une grosse mosaïque) ET, avec l'écriture
 incrémentale, l'écriture de TOUS les morceaux de la grille AVANT même
-d'ouvrir l'interface de revue - un délai qui pouvait donner l'impression
-que l'interface n'affichait rien. Découper D'ABORD (rapide - uniquement de
-la lecture/écriture de pixels, aucune inférence) puis revoir CHAQUE morceau
-indépendamment via `assisted_annotate.py` (qui redevient un outil "une
+d'ouvrir l'interface de revue - un délai qui donnerait l'impression que
+l'interface n'affiche rien. Découper D'ABORD (rapide - uniquement de la
+lecture/écriture de pixels, aucune inférence) puis revoir CHAQUE morceau
+indépendamment via `assisted_annotate.py` (qui reste ainsi un outil "une
 image, une revue, un lot" - voir sa docstring) répartit le travail en
 unités plus petites et plus rapides à démarrer, et fait de la contrainte
 CVAT le découpage naturel du travail plutôt qu'un détail d'écriture
@@ -56,9 +55,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.data.image_io import load_image_bgr
 from src.data.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
 
-# Limite d'import CVAT (constatée par l'utilisateur, 27/08/2026) : une image
-# de plus de ~150 millions de pixels est refusée à l'import.
-CVAT_MAX_PIXELS = 150_000_000
+# Limite d'import CVAT (constatée empiriquement, pas documentée officiellement) :
+# une image de plus de ~50 millions de pixels est refusée à l'import.
+CVAT_MAX_PIXELS = 50_000_000
 
 
 def _resolve_n_pieces(n_pieces: Optional[int], img_w: int, img_h: int, max_pixels: int) -> int:

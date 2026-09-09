@@ -13,6 +13,14 @@ PyYAML
 rasterio
 Pillow
 
+# Ajouté le 08/09/2026 : utilisées par les scripts de diagnostic dataset
+# (src/data/diagnostics/) - manquaient de ce fichier alors que déjà
+# nécessaires en pratique (audit fait à cette date : imports réels du
+# code comparés à requirements.txt).
+matplotlib      # tile_density_diagnostic.py (graphiques de densité, backend Agg)
+pandas          # dataset_diagnostic.py (tableaux de synthèse)
+openpyxl        # dataset_diagnostic.py (moteur d'écriture .xlsx pour pandas.ExcelWriter)
+
 # Ajouté le 06/09/2026 : similarité visuelle pré-entraînée pour le
 # dédoublonnage inter-photos (src/application/visual_similarity.py) - voir
 # src/application/dedup.py pour le diagnostic qui motive cet ajout (l'IoU

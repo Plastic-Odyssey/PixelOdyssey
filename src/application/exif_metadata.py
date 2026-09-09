@@ -5,32 +5,29 @@ PixelOdyssey - Extraction des métadonnées de vol (GPS, altitude, cap, tangage)
 depuis une photo drone brute, pour la géolocalisation directe (pipeline
 "application" - voir geolocation.py).
 
-Découverte empirique du 04/09/2026 (3 photos réelles DJI Air 2S fournies par
-l'utilisateur, voir journal_decisions_pipeline.md) qui structure ce module :
+Constats sur le matériel DJI Air 2S qui structurent ce module :
 
 1. Le tag EXIF standard `GPSAltitude`/`GPSAltitudeRef` N'EST PAS FIABLE sur ce
-   drone : sur les 3 photos testées, `GPSAltitudeRef` valait tantôt 0
-   (au-dessus du niveau mer) tantôt 1 (EN DESSOUS), avec une `AbsoluteAltitude`
-   XMP négative (-4.17m) sur l'une d'elles - inexploitable comme altitude de
-   vol. La vraie source utilisable est le champ **XMP propriétaire DJI**
-   `drone-dji:RelativeAltitude` (altitude relative au point de décollage,
-   AGL) - c'est ce que ce module lit, jamais le GPS EXIF standard pour
-   l'altitude.
+   drone : `GPSAltitudeRef` peut valoir tantôt 0 (au-dessus du niveau mer)
+   tantôt 1 (EN DESSOUS), avec une `AbsoluteAltitude` XMP parfois négative -
+   inexploitable comme altitude de vol. La vraie source utilisable est le
+   champ **XMP propriétaire DJI** `drone-dji:RelativeAltitude` (altitude
+   relative au point de décollage, AGL) - c'est ce que ce module lit, jamais
+   le GPS EXIF standard pour l'altitude.
 2. Le cap de la caméra (`drone-dji:GimbalYawDegree`) et son tangage
    (`drone-dji:GimbalPitchDegree`) sont dans ce même bloc XMP - PAS dans
    l'EXIF standard (qui n'a pas de tag caméra pour un drone à gimbal
-   orientable). `GimbalPitchDegree` observé : -85.00°/-89.90°/-89.90° - PAS
-   toujours exactement -90° (nadir parfait) : geolocation.py doit vérifier
-   cette valeur, pas la supposer.
+   orientable). `GimbalPitchDegree` n'est PAS toujours exactement -90°
+   (nadir parfait) : geolocation.py doit vérifier cette valeur, pas la
+   supposer.
 3. Ce bloc XMP est un espace de noms PROPRIÉTAIRE DJI (`drone-dji:*`) - un
-   autre constructeur (Delair, annoncé le 04/09/2026 mais pas encore
-   disponible) n'a aucune raison d'utiliser le même schéma. Ce module
+   autre constructeur n'a aucune raison d'utiliser le même schéma. Ce module
    structure donc l'extraction par ADAPTATEUR DE CONSTRUCTEUR (dispatch sur
    le tag EXIF `Make`) plutôt qu'un parsing DJI codé en dur partout - ajouter
    un constructeur = ajouter une fonction `_extract_flight_tags_<make>()`,
-   jamais modifier `extract_photo_metadata()`. Tant qu'aucun fichier Delair
-   réel n'a été fourni pour vérification, AUCUN adaptateur n'est ajouté à
-   l'aveugle (même principe que config/sensor_specs.yaml).
+   jamais modifier `extract_photo_metadata()`. Tant qu'aucun fichier réel
+   d'un autre constructeur n'a été fourni pour vérification, AUCUN adaptateur
+   n'est ajouté à l'aveugle (même principe que config/sensor_specs.yaml).
 
 Exemple :
     from src.application.exif_metadata import extract_photo_metadata
@@ -41,7 +38,7 @@ Exemple :
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Tuple, Union
 
 from PIL import Image
 from PIL.ExifTags import TAGS
@@ -85,6 +82,73 @@ def _dms_to_decimal(dms, ref: str) -> float:
     if ref in ("S", "W"):
         value = -value
     return value
+
+
+def extract_gps_latlon(
+    img_path: Union[str, Path], xmp_attrs: Optional[Dict[str, str]] = None,
+) -> Optional[Tuple[float, float]]:
+    """Lit UNIQUEMENT la position GPS (lat, lon en degrés décimaux WGS84)
+    d'une photo, sans exiger aucune autre métadonnée de vol (focale,
+    orientation, cap/tangage caméra, constructeur supporté...) - contrairement
+    à `extract_photo_metadata()` ci-dessous, qui EXIGE toutes ces métadonnées
+    et lève une exception au moindre champ manquant (nécessaire pour la
+    géolocalisation directe des détections, voir sa docstring).
+
+    Sert les usages qui n'ont besoin QUE de savoir où une photo a été prise
+    (ex : carte de couverture d'une acquisition, voir
+    `experiments/notebooks/02_images_mapping.ipynb`) - retourne `None` si
+    aucune position n'est trouvée (ni EXIF, ni XMP DJI) ou si le fichier est
+    illisible, plutôt que de lever une exception, pour rester utilisable sur
+    un dossier hétérogène (autre constructeur, fichier recompressé, photo non
+    géoréférencée). Utilisée en interne par `extract_photo_metadata()` (même
+    logique de lecture EXIF/XMP, source unique - voir sa docstring pour le
+    choix EXIF vs XMP en cas de désaccord) - `xmp_attrs` permet à cet appelant
+    de réutiliser un bloc XMP déjà lu plutôt que de relire le fichier une
+    deuxième fois ; les autres appelants le laissent à `None` (lu ici)."""
+    img_path = Path(img_path)
+    try:
+        img = Image.open(img_path)
+        exif = img.getexif()
+        gps_ifd = exif.get_ifd(_GPS_IFD_TAG)
+    except Exception:
+        return None
+
+    lat_exif = lon_exif = None
+    if all(k in gps_ifd for k in (1, 2, 3, 4)):
+        try:
+            lat_exif = _dms_to_decimal(gps_ifd[2], str(gps_ifd[1]))
+            lon_exif = _dms_to_decimal(gps_ifd[4], str(gps_ifd[3]))
+        except (TypeError, ValueError, ZeroDivisionError):
+            lat_exif = lon_exif = None
+
+    if xmp_attrs is None:
+        try:
+            xmp_attrs = _extract_xmp_attributes(img_path)
+        except Exception:
+            xmp_attrs = {}
+
+    lat_xmp = lon_xmp = None
+    if "drone-dji:GpsLatitude" in xmp_attrs and "drone-dji:GpsLongitude" in xmp_attrs:
+        try:
+            lat_xmp = float(xmp_attrs["drone-dji:GpsLatitude"])
+            lon_xmp = float(xmp_attrs["drone-dji:GpsLongitude"])
+        except (TypeError, ValueError):
+            lat_xmp = lon_xmp = None
+
+    if lat_exif is not None:
+        if lat_xmp is not None and (
+            abs(lat_exif - lat_xmp) > _GPS_CROSS_CHECK_TOLERANCE_DEG
+            or abs(lon_exif - lon_xmp) > _GPS_CROSS_CHECK_TOLERANCE_DEG
+        ):
+            print(
+                f"⚠️  [exif_metadata] {img_path} : désaccord GPS EXIF ({lat_exif},{lon_exif}) "
+                f"vs XMP ({lat_xmp},{lon_xmp}) > {_GPS_CROSS_CHECK_TOLERANCE_DEG}° - EXIF utilisé, "
+                f"à vérifier si ça se reproduit souvent."
+            )
+        return lat_exif, lon_exif
+    if lat_xmp is not None:
+        return lat_xmp, lon_xmp
+    return None
 
 
 def _extract_xmp_attributes(img_path: Path) -> Dict[str, str]:
@@ -165,32 +229,12 @@ def extract_photo_metadata(img_path: Union[str, Path]) -> PhotoMetadata:
         raise ValueError(f"{img_path} : tag EXIF FocalLength manquant.")
     focal_length_mm = float(exif_ifd[37386])
 
-    gps_ifd = exif.get_ifd(_GPS_IFD_TAG)
-    lat_exif = lon_exif = None
-    if all(k in gps_ifd for k in (1, 2, 3, 4)):
-        lat_exif = _dms_to_decimal(gps_ifd[2], str(gps_ifd[1]))
-        lon_exif = _dms_to_decimal(gps_ifd[4], str(gps_ifd[3]))
-
     xmp_attrs = _extract_xmp_attributes(img_path)
 
-    lat_xmp = lon_xmp = None
-    if "drone-dji:GpsLatitude" in xmp_attrs and "drone-dji:GpsLongitude" in xmp_attrs:
-        lat_xmp = float(xmp_attrs["drone-dji:GpsLatitude"])
-        lon_xmp = float(xmp_attrs["drone-dji:GpsLongitude"])
-
-    if lat_exif is not None:
-        lat, lon = lat_exif, lon_exif
-        if lat_xmp is not None and (abs(lat_exif - lat_xmp) > _GPS_CROSS_CHECK_TOLERANCE_DEG
-                                     or abs(lon_exif - lon_xmp) > _GPS_CROSS_CHECK_TOLERANCE_DEG):
-            print(
-                f"⚠️  [exif_metadata] {img_path} : désaccord GPS EXIF ({lat_exif},{lon_exif}) "
-                f"vs XMP ({lat_xmp},{lon_xmp}) > {_GPS_CROSS_CHECK_TOLERANCE_DEG}° - EXIF utilisé, "
-                f"à vérifier si ça se reproduit souvent."
-            )
-    elif lat_xmp is not None:
-        lat, lon = lat_xmp, lon_xmp
-    else:
+    gps = extract_gps_latlon(img_path, xmp_attrs=xmp_attrs)
+    if gps is None:
         raise ValueError(f"{img_path} : position GPS introuvable (ni EXIF, ni XMP).")
+    lat, lon = gps
 
     extractor = _FLIGHT_TAG_EXTRACTORS.get(make)
     if extractor is None:

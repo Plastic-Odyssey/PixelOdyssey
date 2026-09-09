@@ -74,7 +74,7 @@ from src.data.class_config import (
 from src.data.pipeline_utils import ensure_cache_is_safe
 from src.data.raw_dataset import collect_parent_images, site_of_batch
 
-BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
+from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py
 RAW_DIR = os.path.join(BASE_DIR, "1_annotated_dataset")
 SPLIT_DIR = os.path.join(BASE_DIR, "2_split_dataset")
 

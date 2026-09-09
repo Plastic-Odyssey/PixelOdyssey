@@ -31,8 +31,8 @@ Entrée : manifeste de split (parent_manifest.json), images brutes, et soit
 un modèle entraîné (best.pt) soit un predict_tile_fn injecté.
 Sortie : page HTML interactive sous <output_dir>/<run_id>/index.html.
 
-Taxonomie du modèle visualisé (ajouté le 03/09/2026, suite au dataset mono-classe) :
-la taxonomie n'est PAS déduite du modèle lui-même - elle vient de `--config`
+Taxonomie du modèle visualisé : la taxonomie n'est PAS déduite du modèle
+lui-même - elle vient de `--config`
 (défaut : config/data_config.yaml, le référentiel 7-classes principal), qui
 DOIT être le MÊME fichier que celui utilisé pour entraîner le modèle passé à
 --model (voir train.py --config / data_pipeline.py --config). Le garde-fou
@@ -82,7 +82,7 @@ from src.review.tiled_inference import make_ultralytics_predict_fn, predict_pare
 import cv2
 import numpy as np
 
-BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
+from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py
 VIEWER_DIR = os.path.join(BASE_DIR, "6_prediction_viewer")
 
 # Couleurs BGR (convention OpenCV) - un statut = une couleur, jamais une classe
@@ -315,13 +315,13 @@ def run_visualize(
     """Voir la docstring du module. `predict_tile_fn` : même rôle qu'en
     label_review.py, pour les tests (faux modèle, pas de poids réels).
 
-    `class_config_path` (ajouté le 03/09/2026, pour rendre l'outil utilisable
-    sur un modèle mono-classe sans le forcer sur le référentiel 7-classes) :
-    référentiel de classes à utiliser pour résoudre les noms affichés ET pour
-    le garde-fou anti-mismatch (`assert_model_matches_taxonomy` ci-dessous) -
-    DOIT être le même fichier que celui utilisé pour entraîner `model_path`.
-    `split_dir` doit, de la même façon, pointer vers le manifeste DU MÊME
-    dataset que ce modèle (ex: 2_split_dataset_mono_class)."""
+    `class_config_path` : référentiel de classes à utiliser pour résoudre les
+    noms affichés ET pour le garde-fou anti-mismatch
+    (`assert_model_matches_taxonomy` ci-dessous) - DOIT être le même fichier
+    que celui utilisé pour entraîner `model_path`. Permet d'utiliser l'outil
+    sur un modèle mono-classe sans le forcer sur le référentiel 7-classes par
+    défaut. `split_dir` doit, de la même façon, pointer vers le manifeste DU
+    MÊME dataset que ce modèle (ex: 2_split_dataset_mono_class)."""
     if predict_tile_fn is None:
         if not model_path:
             available_models = _discover_available_models(RUNS_DIR)

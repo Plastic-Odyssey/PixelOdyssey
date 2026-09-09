@@ -95,7 +95,7 @@ from src.review.tiled_inference import make_ultralytics_predict_fn, predict_pare
 
 from shapely.geometry import Polygon
 
-BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
+from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py
 REVIEW_DIR = os.path.join(BASE_DIR, "5_review_dataset")
 
 # src/review/label_review.py -> parents[2] = racine du repo. Même calcul que

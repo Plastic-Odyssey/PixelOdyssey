@@ -3,13 +3,12 @@
 """
 PixelOdyssey - Revue web légère des faux positifs (panier A), sans passer par CVAT.
 
-Contexte (voir journal du 28/08/2026, "F1 ajouté + décision de priorité") : une partie
-des "faux positifs" mesurés dans les rapports d'entraînement sont probablement des
-déchets réels que l'annotation a simplement oubliés - une détection correcte du modèle
-sur un objet non annoté compte comme une erreur alors que c'est un trou dans la vérité
-terrain. `label_review.py` détecte déjà ce cas (panier A : prédiction confiante SANS
-annotation correspondante) mais son seul chemin de correction est un export vers CVAT,
-jugé trop lent à l'usage pour ce genre de décision "oui/non" simple.
+Contexte : une partie des "faux positifs" mesurés dans les rapports d'entraînement sont
+probablement des déchets réels que l'annotation a simplement oubliés - une détection
+correcte du modèle sur un objet non annoté compte comme une erreur alors que c'est un
+trou dans la vérité terrain. `label_review.py` détecte déjà ce cas (panier A : prédiction
+confiante SANS annotation correspondante) mais son seul chemin de correction est un
+export vers CVAT, jugé trop lent à l'usage pour ce genre de décision "oui/non" simple.
 
 CE MODULE NE FAIT QUE PANIER A (annotation probablement oubliée) - PAS le panier C de
 label_review.py (masque existant probablement mal ajusté, à retoucher). Une revue
@@ -28,11 +27,10 @@ Fonctionnement :
        masque en surimpression) : bandeau de sous-classe éditable, menu déroulant
        proposant TOUT le référentiel PROJET (~20 sous-classes, class_taxonomy de
        config/data_config.yaml - voir class_config.load_global_class_options), pas
-       seulement les sous-classes que CE lot déclare localement (CORRECTIF 28/08/2026,
-       voir journal - l'ancienne limite au référentiel local du lot empêchait de choisir
-       une sous-classe pertinente que ce lot n'avait simplement jamais eu l'occasion de
-       déclarer, ex: un lot cold-start bootstrap_annotate qui ne connaît que ses 7
-       super-classes). Le modèle ne prédit qu'en espace super-classe (label_review.py a
+       seulement les sous-classes que CE lot déclare localement - une revue humaine doit
+       pouvoir choisir une sous-classe pertinente même si ce lot n'a simplement jamais eu
+       l'occasion de la déclarer, ex: un lot cold-start bootstrap_annotate qui ne connaît
+       que ses 7 super-classes. Le modèle ne prédit qu'en espace super-classe (label_review.py a
        la même limite) : les sous-classes qui résolvent vers la super-classe PRÉDITE
        restent listées en premier (choix par défaut du menu), le reste du référentiel
        projet suit. Deux boutons Valider/Supprimer.
@@ -118,10 +116,11 @@ CORRECTED_DIR = os.path.join(BASE_DIR, "1bis_corrected_annotation")
 
 # Taille de cache d'images sources gardées en mémoire pendant la revue web - les
 # images de ce projet peuvent être de grandes orthomosaïques, on ne veut JAMAIS
-# toutes les garder en mémoire à la fois. 2 suffit dans le cas courant (candidats
-# groupés par image consécutive dans la liste, voir collect_bucket_a_candidates) :
+# toutes les garder en mémoire à la fois. 2 suffit tant que les candidats restent
+# groupés par image consécutive dans la liste (voir collect_bucket_a_candidates) :
 # l'image courante + la précédente le temps qu'une requête tardive du navigateur
-# (rechargement de page) arrive encore à retrouver son chip.
+# (rechargement de page) arrive encore à retrouver son chip. Statut : tranché pour
+# ce mode de parcours ; à revisiter seulement si l'ordre des candidats change.
 IMAGE_CACHE_SIZE = 2
 
 
@@ -154,14 +153,12 @@ def _ordered_global_class_options(
     tout le run - voir `class_config.load_global_class_options` et son appel dans
     `collect_bucket_a_candidates`) pour un candidat donné.
 
-    CORRECTIF (28/08/2026) : le menu propose désormais TOUT le référentiel du PROJET
-    (~20 sous-classes), plus seulement les sous-classes que CE lot déclare localement dans
-    son propre data.yaml (ancien comportement, voir `_matching_local_ids`/`_review_class_options`
-    dans le journal de décisions) - une revue humaine doit pouvoir choisir la sous-classe
-    correcte même si ce lot particulier ne l'a encore jamais rencontrée (elle sera alors
-    ajoutée au data.yaml LOCAL COPIÉ de ce lot, voir `_write_corrected_dataset`), et pas
-    seulement corriger la super-classe mal prédite à l'intérieur du sous-ensemble déjà connu
-    de ce lot.
+    Le menu propose TOUT le référentiel du PROJET (~20 sous-classes), pas seulement les
+    sous-classes que CE lot déclare localement dans son propre data.yaml : une revue humaine
+    doit pouvoir choisir la sous-classe correcte même si ce lot particulier ne l'a encore
+    jamais rencontrée (elle sera alors ajoutée au data.yaml LOCAL COPIÉ de ce lot, voir
+    `_write_corrected_dataset`), et pas seulement corriger la super-classe mal prédite à
+    l'intérieur du sous-ensemble déjà connu de ce lot.
 
     Les sous-classes qui résolvent vers `predicted_target_id` (la suggestion du modèle) restent
     listées EN PREMIER, dans leur ordre d'apparition dans class_taxonomy - c'est toujours le
@@ -274,9 +271,8 @@ def collect_bucket_a_candidates(
                     if not options:
                         # Ne peut arriver que si le référentiel PROJET lui-même ne contient aucune
                         # sous-classe résolvant vers une vraie super-classe (config/data_config.yaml
-                        # vide ou mal formé) - garde de sécurité, plus un cas "par lot" comme avant
-                        # le correctif du 28/08 (le menu est désormais global, pas limité à ce que
-                        # CE lot déclare localement).
+                        # vide ou mal formé) - garde de sécurité. Le menu étant global (pas limité à
+                        # ce que CE lot déclare localement), ce n'est plus un cas "par lot".
                         skipped_no_placeholder += 1
                         print(
                             f"  ⚠️  Référentiel projet sans aucune sous-classe résolvant vers une "
@@ -332,12 +328,12 @@ class _ReviewState:
         self.finished = False
         self.decisions: List[Dict] = []
         # Ajouts en attente, regroupés par fichier de label SOURCE (pas encore la destination
-        # copiée - résolu au moment de l'écriture, voir _write_corrected_dataset). PAS encore
-        # de ligne de label prête (contrairement à avant le correctif du 28/08) : le menu étant
-        # désormais PROJET, l'ID LOCAL (propre à chaque lot) qui ira dans le .txt n'est connu
-        # qu'au moment de l'écriture, une fois le data.yaml de CE lot rechargé (réutilisation
-        # d'un ID existant si ce lot connaît déjà cette sous-classe, sinon allocation d'un
-        # nouveau) - chaque entrée garde donc (lot, nom_canonique, coordonnées) en attendant.
+        # copiée - résolu au moment de l'écriture, voir _write_corrected_dataset). Pas encore
+        # de ligne de label prête ici : le menu étant PROJET, l'ID LOCAL (propre à chaque lot)
+        # qui ira dans le .txt n'est connu qu'au moment de l'écriture, une fois le data.yaml de
+        # CE lot rechargé (réutilisation d'un ID existant si ce lot connaît déjà cette
+        # sous-classe, sinon allocation d'un nouveau) - chaque entrée garde donc (lot,
+        # nom_canonique, coordonnées) en attendant.
         self.pending_additions: Dict[str, List[Dict]] = defaultdict(list)
         self.lock = threading.Lock()
         self._img_cache: "OrderedDict[str, object]" = OrderedDict()

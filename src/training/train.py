@@ -40,8 +40,33 @@ relancer l'entraînement :
 Entrée : dataset configuré via config/data_config.yaml, paramètres de la section 1 ci-dessus.
 Sortie : poids entraînés + rapport HTML dans output/runs/<nom_du_run>/.
 
-Exemple :
+Exemples (voir --help pour la liste complète des options) :
+
+    # Cas normal : utilise CONFIG_PATH (config/data_config.yaml) et RUN_TAG tels que
+    # définis en tête de fichier (section 1 ci-dessus).
     python -m src.training.train
+
+    # Étiquette ponctuelle sans éditer RUN_TAG - utile pour un run isolé (ex: un
+    # baseline de comparaison) sans laisser une étiquette de test active pour le
+    # prochain run "normal".
+    python -m src.training.train --tag test_manuel
+
+    # Taxonomie/dataset alternatif : nécessite que le 4_sliced_dataset correspondant
+    # existe déjà (voir data_pipeline.py --config/--suffix, --site/--suffix ou
+    # --raw-dir/--suffix pour le générer). --tag n'est jamais déduit automatiquement
+    # de --config : à fournir explicitement pour un nom de run lisible.
+    python -m src.training.train --config config/data_config_mono_class.yaml --tag mono_class
+    python -m src.training.train --config config/data_config_no_debris.yaml --tag no_debris
+    python -m src.training.train --config config/data_config_SL.yaml --tag SL_dedie
+
+    # Défauts Ultralytics purs pour l'augmentation/le rééquilibrage (degrees, flipud,
+    # copy_paste, copy_paste_mode, cls_pw, mixup, overlap_mask NON transmis - voir la
+    # docstring de launch_training() pour le point de vigilance sur degrees/flipud,
+    # qui ne sont PAS de simples leviers de rééquilibrage).
+    python -m src.training.train --default-augment --tag defaults_purs
+
+    # Combinable : dataset alternatif ET défauts purs à la fois.
+    python -m src.training.train --config config/data_config_mono_class.yaml --default-augment --tag mono_class_defaults
 """
 
 import sys
@@ -58,163 +83,92 @@ from src.training.training_report import generate_report
 # ============================================================================
 
 # --- Choix de l'architecture -------------------------------------------------
-# Ultralytics télécharge automatiquement le poids pré-entraîné correspondant
-# au premier lancement (mis en cache localement) : pas besoin de gérer
-# l'URL/le téléchargement toi-même, contrairement à l'ancienne version de ce
-# script.
+# Combine une famille et une taille de modèle. Suffixe "-seg" obligatoire :
+# ce sont les variantes segmentation (les seules pertinentes ici, PixelOdyssey
+# délimite des masques de déchets, pas juste des boîtes). Ultralytics
+# télécharge et met en cache le poids pré-entraîné correspondant automatiquement.
 #
-# Nom de fichier attendu, en combinant une famille et une taille :
+#   Famille  | Fichier                   | Taille (léger -> lourd)
+#   ---------|---------------------------|---------------------------------
+#   YOLOv8   | yolov8{n,s,m,l,x}-seg.pt  | n < s < m < l < x
+#   YOLOv11  | yolo11{n,s,m,l,x}-seg.pt  | n < s < m < l < x
 #
-#   Famille  | Fichier            | Repère mémoire / vitesse
-#   ---------|--------------------|------------------------------------
-#   YOLOv8   | yolov8{n,s,m,l,x}-seg.pt |
-#   YOLOv11  | yolo11{n,s,m,l,x}-seg.pt |
-#
-#   n (nano) = le plus léger/rapide, le moins précis
-#   s (small), m (medium), l (large), x (xlarge) = de plus en plus lourd,
-#   lent à entraîner, mais généralement plus précis.
-#
-# Le suffixe "-seg" est obligatoire : ce sont les variantes segmentation
-# (les seules pertinentes ici, PixelOdyssey délimite des masques de déchets,
-# pas juste des boîtes).
+# Choix pas définitivement tranché : dépend de l'objectif de chaque run.
+# Repère pour choisir : monter en taille (nano -> medium) n'aide QUE si la
+# faiblesse observée est un problème de PRÉCISION du modèle (contours de
+# masque imprécis, généralisation qui plafonne) - jamais un problème de
+# VOLUME/DIVERSITÉ de données (ex: classe rare sous-représentée), qu'une
+# architecture plus grande ne fait qu'aggraver côté surapprentissage sur un
+# dataset encore de taille modeste. Regarder le rapport par classe d'un run
+# nano avant de sauter à une taille supérieure.
 MODEL_WEIGHTS = "yolo11n-seg.pt"   # <-- change UNIQUEMENT cette ligne pour tester un autre modèle
-# Exemples à tester : "yolov8n-seg.pt", "yolov8s-seg.pt", "yolo11s-seg.pt", "yolo11m-seg.pt"
-#
-# Note sur "nano vs medium" : plus de capacité n'aide QUE si la faiblesse observée est un souci
-# de PRÉCISION DU MODÈLE (ex: contours de masque imprécis) - pas un souci de VOLUME/DIVERSITÉ DE
-# DONNÉES (ex: classe rare sous-représentée), que plus de paramètres ne fait qu'aggraver côté
-# surapprentissage sur un dataset encore petit (~540 images parentes avant slicing).
-# Recommandation : regarder le rapport val/test par classe avant de sauter à "m" - si le nano
-# généralise déjà bien mais plafonne en précision, tester "yolo11s-seg.pt" d'abord (saut de
-# capacité plus mesuré) plutôt que "m" directement.
 
 # --- Hyperparamètres d'entraînement -----------------------------------------
-EPOCHS = 100
-IMGSZ = 640
-BATCH = 16          # -1 = laisse Ultralytics choisir automatiquement selon la VRAM dispo
+EPOCHS = 100         # nombre maximal d'epochs - l'arrêt anticipé (PATIENCE) coupe généralement avant
+IMGSZ = 640          # doit correspondre à la taille des tuiles du dataset (voir slice_dataset.py)
+BATCH = 16           # -1 = laisse Ultralytics choisir automatiquement selon la VRAM disponible
 PATIENCE = 20        # arrêt anticipé si aucune amélioration après N epochs (0 = désactivé, va au bout des EPOCHS)
-DEVICE = 0          # 0 = 1er GPU ; "cpu" = CPU ; "0,1" = multi-GPU
-WORKERS = 4         # réduit de 4 à 2 le 04/09/2026 suite à un crash WinError 1450
-                    # ("ressources système insuffisantes") pendant la validation du run
-                    # yolo11s+tuned_recipe - sature moins les workers DataLoader sous Windows
+DEVICE = 0           # 0 = 1er GPU ; "cpu" = CPU ; "0,1" = multi-GPU
+WORKERS = 4          # parallélisme du chargement des données. En cas de crash de ressources système
+                     # sous Windows (WinError 1450) pendant l'entraînement ou la validation, abaisser
+                     # cette valeur (jusqu'à 1 si besoin) est la mitigation connue - au prix d'un
+                     # chargement de données plus lent.
 
-# --- Augmentation -------------------------------------------------------------
+# --- Augmentation géométrique : correction d'un fait du dataset, pas un levier de rééquilibrage ----
 #
-# Nos images sont des vues NADIR (drone à la verticale) : contrairement à une
-# photo "normale" avec un horizon et un "haut" naturel (le cas pour lequel les
-# défauts d'Ultralytics, pensés COCO, sont calibrés), un déchet photographié
-# du dessus peut apparaître à N'IMPORTE QUELLE orientation - il n'y a pas de
-# "haut" physique. Deux changements en découlent directement, pas des
-# suppositions :
-DEGREES = 180.0     # défaut Ultralytics = 0.0 (aucune rotation). Sans justification pour une vue
-                    # nadir : le modèle voyait toujours les déchets dans l'orientation de prise de
-                    # vue d'origine, jamais tournés - 180 = rotation aléatoire sur tout le cercle.
-FLIPUD = 0.5        # défaut Ultralytics = 0.0. FLIPLR est à 0.5 par défaut (retournement horizontal
-                    # aléatoire) mais pas FLIPUD (vertical) - illogique en nadir, où les deux sont
-                    # équivalents. Aligné sur fliplr pour la même raison.
+# Nos images sont des vues NADIR (drone à la verticale) : contrairement à une photo "normale" avec
+# un horizon et un "haut" naturel (le cas pour lequel les défauts d'Ultralytics sont calibrés), un
+# déchet photographié du dessus peut apparaître à N'IMPORTE QUELLE orientation. Tranché : ces deux
+# valeurs restent actives quel que soit le nombre de classes ou l'objectif du run - ce n'est jamais
+# un levier à couper par réflexe.
+DEGREES = 180.0      # défaut Ultralytics = 0.0 (aucune rotation) ; 180 = rotation aléatoire sur tout le cercle
+FLIPUD = 0.5         # défaut Ultralytics = 0.0 ; aligné sur FLIPLR (déjà à 0.5 par défaut, retournement
+                     # horizontal), pour la même raison d'absence d'orientation privilégiée en vue nadir
 
-# copy_paste (défaut Ultralytics 0.0, désactivé) : colle des instances segmentées dans le même batch -
-# c'est le mécanisme natif Ultralytics pour l'oversampling par augmentation des classes rares
-# (Bidon, Bouee) - et, occasion identifiée le 28/08, un moyen de simuler des déchets rapprochés/qui se
-# touchent (utile pour le problème de rappel en zone de forte accumulation).
+# --- Leviers de rééquilibrage des classes / d'augmentation avancée ----------------------------------
 #
-# CORRECTIF (28/08/2026) : précédemment laissé à 0.0 par crainte de coller des instances sur des fonds
-# dont l'éclairage/le grain ne correspond pas - MAIS cette crainte suppose `copy_paste_mode="mixup"`
-# (colle une instance d'une AUTRE image). Vérifié dans le code source d'Ultralytics
-# (`ultralytics/data/augment.py`, classe CopyPaste) : le mode PAR DÉFAUT est `copy_paste_mode="flip"`
-# (voir explicitement ci-dessous), qui colle une copie MIROIR d'une instance de la MÊME image sur
-# elle-même - même éclairage, même grain, même capteur/exposition. Le risque de "collage" que
-# degrees/flipud n'ont pas est donc largement écarté par ce mode, contrairement à ce que le
-# commentaire précédent laissait entendre. Réintroduit en isolant cette SEULE variable par rapport à
-# `ref_split_corrige` (même split, mêmes autres hyperparamètres) pour mesurer proprement son effet.
-# Valeur 0.5 : reprend l'exemple donné par Ultralytics lui-même dans la docstring de CopyPaste, assez
-# fort pour produire un effet mesurable sur un seul run.
-# À vérifier malgré tout après ce run via `visualize_predictions.py --scope test` : même en mode flip,
-# un collage laisse une jointure (pas de fondu) - à surveiller pour des artefacts de bord, et à
-# comparer aux résultats de `ref_split_corrige` via `compare_runs.py`.
-#
-# PAUSE (28/08/2026) : run `copy_paste_flip05` (0.5) comparé à `ref_split_corrige` - pas d'amélioration
-# sur TEST (rappel macro -3,8pp, précision globale pondérée -8,4pp), malgré une nette amélioration sur
-# VAL - décalage val/test à comprendre avant de remonter cette valeur. Remis à 0.0 le temps d'isoler
-# proprement `cls_pw` (voir ci-dessous) contre `ref_split_corrige` - PAS empilé sur copy_paste tant que
-# ce dernier n'est pas confirmé comme un progrès réel. Voir journal pour le détail complet.
+# Chacun des quatre paramètres ci-dessous répond à un problème identifié (classes rares, objets qui
+# se touchent) mais aucun n'a démontré à ce jour un gain net et sans contrepartie sur le jeu de test -
+# tous restent des leviers OUVERTS, à évaluer un par un, jamais plusieurs à la fois (une comparaison
+# n'a de sens que si une seule variable change par rapport à un run de référence stable).
+
+# copy_paste (0=désactivé) : colle des instances segmentées dans le même batch - mécanisme natif
+# Ultralytics pour sur-échantillonner les classes rares et simuler des déchets rapprochés/qui se
+# touchent. copy_paste_mode="flip" colle une copie MIROIR d'une instance de la MÊME image (même
+# éclairage, même grain) ; "mixup" colle une instance d'une AUTRE image (risque de collage
+# visuellement incohérent, à éviter sauf besoin explicite). Statut : désactivé, question ouverte.
 COPY_PASTE = 0
-COPY_PASTE_MODE = "mixup"  # explicite : c'est le défaut Ultralytics, mais la distinction flip/mixup
-                           # est le coeur du correctif ci-dessus - jamais la laisser implicite ici.
-                           # Sans effet tant que COPY_PASTE=0.0 (voir PAUSE ci-dessus).
+COPY_PASTE_MODE = "flip"  # à garder explicite (jamais implicite) même quand COPY_PASTE=0, pour que
+                          # la valeur soit correcte le jour où ce levier est réactivé
 
-# cls_pw (défaut Ultralytics 0.0, désactivé) : PAS l'ancien "cls_pw" de YOLOv5 (poids BCE fixe) - dans
-# cette version, pondère la loss de classification PAR CLASSE, selon la fréquence des instances dans
-# le train du split (uniquement train, jamais val/test - vérifié dans
-# `ultralytics/models/yolo/detect/train.py`, `DetectionTrainer.get_class_counts/set_class_weights`,
-# dont hérite le trainer de segmentation) :
-#   poids_classe = (1 / nb_instances_de_cette_classe_dans_train) ** cls_pw
-# puis normalisé pour que la moyenne des poids sur les 7 classes vaille 1,0 (l'échelle globale de la
-# loss ne change pas, seule sa répartition entre classes change). cls_pw=0 : tous les poids = 1
-# (désactivé). cls_pw=1 : inverse de fréquence complet - vu le déséquilibre extrême de ce dataset
-# (Debris_Divers ~75% des instances), risque de sur-corriger et de sacrifier sa précision pour un
-# gain incertain sur les classes à très faible effectif (Bouee, Cagette, Bidon).
-#
-# Valeur 0.5 testée le 28/08 (run `cls_pw05`), comparaison chiffrée par classe pas encore faite
-# (compare_runs.py pas encore relancé) - remis à 0.0 le temps de lancer l'expérience suivante
-# ("sans Debris_Divers", voir --config/CONFIG_PATH ci-dessus et le journal) sans empiler deux
-# changements non encore prouvés. Remettre à 0.5 (ou la valeur qui sera retenue) une fois cls_pw
-# évalué, pour un run qui isole CETTE SEULE variable contre `ref_split_corrige`.
-CLS_PW = 1
+# cls_pw (0=désactivé, 1=inverse de fréquence complet) : pondère la loss de classification PAR CLASSE
+# selon la fréquence des instances dans le train uniquement (poids = (1/n_instances)**cls_pw,
+# normalisé à moyenne 1,0 sur les 7 classes). Vu le déséquilibre extrême du dataset (une catégorie
+# fourre-tout très majoritaire), une valeur élevée risque de sacrifier la précision pour un gain
+# incertain sur les classes rares. Statut : désactivé, question ouverte.
+CLS_PW = 0.0
 
-# scale (défaut 0.5, soit un zoom aléatoire ~0.5x-1.5x) : pas changé ici. C'est le paramètre qui
-# répond à l'écart entre le GSD actuel (~0.5 cm/px) et un futur matériel (~1 cm/px, facteur ~2x) -
-# le défaut couvre déjà un facteur ~3x, donc probablement suffisant tel quel. À vérifier sur le
-# rapport test avant de décider s'il faut l'élargir.
-#
-# hsv_h/hsv_s/hsv_v (variations teinte/saturation/luminosité), erasing : laissés aux défauts
-# Ultralytics - déjà actifs et raisonnables (hsv_v=0.4 couvre une variation de luminosité
-# significative, pertinente pour du sable au soleil/à l'ombre).
-#
-# mosaic (défaut Ultralytics 1.0, `close_mosaic=10` - désactivé les 10 derniers epochs) : DÉJÀ
-# actif à son maximum sur TOUS les runs de ce projet depuis le début, jamais une variable qui a
-# changé - rien à "activer", contrairement à ce que suggérait la demande initiale. Aucun run
-# supplémentaire ne teste ce paramètre, il n'y a rien de nouveau à isoler ici.
-#
-# mixup (défaut Ultralytics 0.0) : PAS le même mécanisme que copy_paste - mélange deux images
-# ENTIÈRES par fondu (alpha blend), pas un collage d'instances découpées. Laissé désactivé
-# jusqu'ici par crainte de brouiller des masques déjà petits (voir historique du fichier) - crainte
-# jamais testée empiriquement. Réintroduit le 28/08 sur la base d'une étude 2024 trouvant
-# spécifiquement mosaic+mixup efficaces sur des détecteurs mono-étage (famille YOLO) là où le
-# rééquilibrage de loss/échantillonnage ne l'était pas (voir journal). Valeur 0.1 : départ prudent
-# (mosaic était déjà à son max, donc c'est mixup qui porte tout le risque de ce run).
-#
-# PAUSE (28/08/2026) : run `mixup01` (0.1) comparé à `ref_split_corrige` sur TEST - précision macro
-# +3,7pp et précision globale pondérée +6,9pp, MAIS rappel macro -3,2pp et surtout rappel global
-# pondéré -6,9pp (31,8% -> 24,9%). mAP50-95 légèrement meilleur (+1,6pp) mais uniquement parce que
-# mAP intègre sur tout le seuil de confiance - au seuil opérationnel réel (0,25 par défaut), c'est
-# strictement plus de faux négatifs. Remis à 0.0 : troisième réglage d'affilée (après copy_paste_flip05
-# et cls_pw05) qui échange du rappel contre de la précision sans gain net - or la priorité du projet
-# est justement de RATTRAPER des détections manquées en zone dense, pas d'en perdre plus. Voir journal
-# du 28/08 ("Pourquoi arrêter d'empiler augmentation/loss-reweighting") pour le raisonnement complet.
+# mixup (0=désactivé) : mélange deux images ENTIÈRES par fondu (alpha blend) - mécanisme différent de
+# copy_paste, qui ne colle que des instances découpées. Risque principal : brouiller des masques déjà
+# petits. Statut : désactivé, question ouverte.
 MIXUP = 0.0
 
-# overlap_mask (défaut Ultralytics True, segmentation uniquement) : quand deux instances se
-# chevauchent dans une image, Ultralytics fusionne TOUS les masques de l'image en un seul masque à
-# 1 canal, en triant par aire décroissante (`polygons2masks_overlap`,
-# `ultralytics/data/utils.py`) - au pixel où deux masques se chevauchent, seul le plus GRAND objet
-# reste dans la cible d'entraînement, le plus petit y est effacé. Vérifié dans le code source
-# (`ultralytics/data/augment.py` + `ultralytics/data/dataset.py`, `mask_overlap=hyp.overlap_mask`) :
-# ce n'est pas une supposition, ce mécanisme tourne, actif, sur TOUS les runs de ce projet depuis le
-# début (jamais examiné jusqu'ici) - contrairement à copy_paste/cls_pw/mixup qui rééquilibrent des
-# CLASSES, celui-ci touche directement le problème n°2 signalé en tout début de cette série
-# d'expériences (rappel qui chute en zone de forte accumulation, objets qui se touchent) : si un
-# petit déchet est partiellement recouvert par un plus grand dans l'image, le modèle n'a
-# actuellement JAMAIS vu son masque complet pendant l'entraînement, quelle que soit
-# l'augmentation/le rééquilibrage testé par ailleurs - ça peut expliquer une partie du plafond de
-# rappel observé sur les 3 runs précédents (aucun ne touchait à ce mécanisme).
-# OVERLAP_MASK=False : chaque instance garde son propre canal de masque (pas de fusion/écrasement),
-# au prix d'un coût mémoire/VRAM plus élevé (N canaux au lieu de 1, N = nb d'instances dans l'image -
-# à surveiller sur ce dataset où Debris_Divers peut regrouper >15 instances dans une même tuile) ;
-# réduire BATCH si CUDA out of memory. Isolé contre `ref_split_corrige` (copy_paste/cls_pw/mixup
-# remis à 0.0 ci-dessus) - une seule variable nouvelle, et une famille de levier différente de
-# celles déjà testées.
+# overlap_mask (True=défaut Ultralytics, False=ici) : quand deux instances se chevauchent dans une
+# image, True fusionne tous les masques en un seul canal (seul le plus grand objet reste appris à
+# chaque pixel de recouvrement) ; False donne un canal par instance (coût VRAM plus élevé - réduire
+# BATCH si CUDA out of memory). Touche directement le rappel en zone de forte accumulation d'objets.
+# Statut : désactivé (False), question ouverte.
 OVERLAP_MASK = False
+
+# scale (défaut Ultralytics ~0.5-1.5x, non modifié) : zoom aléatoire, répond à l'écart de résolution
+# au sol (GSD) entre différents matériels de capture - le défaut couvre déjà un facteur ~3x, à
+# vérifier sur le rapport test seulement si un nouveau matériel de capture change sensiblement le GSD.
+#
+# hsv_h/hsv_s/hsv_v (teinte/saturation/luminosité), erasing : laissés aux défauts Ultralytics, jamais
+# évalués séparément à ce jour.
+#
+# mosaic (défaut Ultralytics 1.0, close_mosaic=10) : actif à son maximum sur tous les runs du projet,
+# jamais désactivé ni testé comme variable.
 
 # --- Étiquette libre pour retrouver ce run dans output/runs/ ---------------
 # Sert uniquement à la lisibilité du nom de dossier - mets ce que tu veux,
@@ -228,6 +182,12 @@ RUN_TAG = "baseline"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
 OUTPUT_DIR = PROJECT_ROOT / "output" / "runs"
+# Emplacement dédié des poids pré-entraînés (nettoyage du 08/09/2026 : YOLO(MODEL_WEIGHTS)
+# avec un simple nom de fichier téléchargeait auparavant dans le dossier courant, dispersant
+# des .pt à la racine du repo à chaque changement de MODEL_WEIGHTS - Ultralytics télécharge
+# à l'emplacement exact donné si le fichier n'y existe pas encore, donc ce chemin suffit à
+# corriger ça pour de bon)
+PRETRAINED_DIR = PROJECT_ROOT / "models" / "pretrained"
 
 
 def _build_run_name(model_weights: str, tag: str) -> str:
@@ -245,11 +205,9 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
     passe --config en ligne de commande plutôt que d'éditer CONFIG_PATH ci-dessus : ça évite de
     laisser une expérience active par erreur pour le prochain run "normal".
 
-    `default_augment` (ajouté le 02/09/2026, pour le baseline mono-classe) : True saute TOUS
-    les kwargs d'augmentation/loss ci-dessus (degrees/flipud/copy_paste/copy_paste_mode/cls_pw/
-    mixup/overlap_mask) - Ultralytics applique alors ses valeurs par défaut pures pour chacun.
-    Point de vigilance à connaître avant de l'utiliser sur un dataset autre que le baseline
-    mono-classe pour lequel ce flag a été ajouté : `degrees`/`flipud` ne sont PAS des réglages
+    `default_augment` : True saute TOUS les kwargs d'augmentation/loss ci-dessus (degrees/flipud/
+    copy_paste/copy_paste_mode/cls_pw/mixup/overlap_mask) - Ultralytics applique alors ses valeurs
+    par défaut pures pour chacun. Point de vigilance : `degrees`/`flipud` ne sont PAS des réglages
     de rééquilibrage de classe comme les autres (copy_paste/cls_pw/mixup/overlap_mask le sont) -
     ils corrigent un fait géométrique du dataset (vue nadir, aucune orientation "haut" naturelle,
     voir le commentaire au-dessus de DEGREES/FLIPUD) qui reste vrai quel que soit le nombre de
@@ -272,7 +230,7 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
 
     # YOLO(...) télécharge automatiquement le poids pré-entraîné si besoin -
     # plus de gestion manuelle d'URL/urllib comme dans l'ancienne version.
-    model = YOLO(MODEL_WEIGHTS)
+    model = YOLO(str(PRETRAINED_DIR / MODEL_WEIGHTS))
 
     train_kwargs = dict(
         data=str(config_path),

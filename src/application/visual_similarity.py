@@ -2,26 +2,26 @@
 # -*- coding: utf-8 -*-
 """
 PixelOdyssey - Similarité visuelle pré-entraînée, pour le dédoublonnage
-inter-photos quand la géométrie reprojetée ne suffit plus (voir le
-correctif du 06/09/2026 en tête de src/application/dedup.py).
+inter-photos quand la géométrie reprojetée ne suffit plus (voir la limite de
+l'IoU seul en tête de src/application/dedup.py).
 
 Modèle choisi : DINOv2 (Meta, "facebook/dinov2-small" via transformers) -
-PAS CLIP. Raisonnement : CLIP est entraîné pour l'alignement image/texte, ce
-qui n'est pas notre besoin ici (comparer deux images entre elles, jamais de
-texte) ; DINOv2 est entraîné en auto-supervisé PUREMENT sur des images, avec
-un objectif qui pousse spécifiquement à des embeddings discriminants pour de
-la similarité/reconnaissance d'instance (retrieval), exactement notre cas
-d'usage ("ces deux chips montrent-ils le même objet réel ?"). La variante
-"small" (~22M paramètres) suffit ici : on ne classifie rien de fin, on
-compare des paires - pas besoin de la variante "large".
+PAS CLIP. Raisonnement (tranché) : CLIP est entraîné pour l'alignement
+image/texte, ce qui n'est pas notre besoin ici (comparer deux images entre
+elles, jamais de texte) ; DINOv2 est entraîné en auto-supervisé PUREMENT sur
+des images, avec un objectif qui pousse spécifiquement à des embeddings
+discriminants pour de la similarité/reconnaissance d'instance (retrieval),
+exactement notre cas d'usage ("ces deux chips montrent-ils le même objet
+réel ?"). La variante "small" (~22M paramètres) suffit ici : on ne classifie
+rien de fin, on compare des paires - pas besoin de la variante "large".
 
-Validation empirique rapide (06/09/2026, voir journal) : sur 3 vues confirmées
-manuellement d'une même cagette (essai1), similarité cosinus 0.55-0.76 entre
-elles, contre 0.40-0.44 pour un objet visuellement différent dans le même
-voisinage. Marge réelle mais pas énorme - PAS un signal "parfait", à utiliser
-en complément d'un filtre de proximité (voir dedup.py), jamais seul sur tout
-le batch (comparer une image à une autre à l'autre bout du site n'a de toute
-façon aucun sens).
+Validation empirique rapide (question ouverte, à confirmer sur plus
+d'exemples) : sur quelques vues confirmées manuellement d'un même objet,
+similarité cosinus 0.55-0.76 entre elles, contre 0.40-0.44 pour un objet
+visuellement différent dans le même voisinage. Marge réelle mais pas
+énorme - PAS un signal "parfait", à utiliser en complément d'un filtre de
+proximité (voir dedup.py), jamais seul sur tout le batch (comparer une image
+à une autre à l'autre bout du site n'a de toute façon aucun sens).
 
 Limite connue, pas encore corrigée : l'embedding est calculé sur le chip
 ENTIER (objet + marge de fond, voir run_application.py::CROP_MARGIN_PX) - le

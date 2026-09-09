@@ -33,12 +33,12 @@ que le HTML, plus les hyperparamètres du run lus dans args.yaml et le
 fingerprint de la donnée réellement utilisée à l'entraînement) - c'est ce
 fichier que lit `compare_runs.py` pour comparer plusieurs runs entre eux.
 
-Garde-fou anti-réinterprétation de taxonomie (voir journal, 27/08/2026) :
-avant d'évaluer, vérifie que le modèle chargé (`model.names`, embarqué dans
-les poids au moment de l'entraînement) correspond EXACTEMENT à la taxonomie
-déclarée dans `data_config_path` - lève une RuntimeError claire sinon, plutôt
-que de produire un tableau par classe scrambé (un ID de classe peut désigner
-une classe différente avant/après un changement de taxonomie - voir
+Garde-fou anti-réinterprétation de taxonomie : avant d'évaluer, vérifie que
+le modèle chargé (`model.names`, embarqué dans les poids au moment de
+l'entraînement) correspond EXACTEMENT à la taxonomie déclarée dans
+`data_config_path` - lève une RuntimeError claire sinon, plutôt que de
+produire un tableau par classe scrambé (un ID de classe peut désigner une
+classe différente si la taxonomie a changé depuis - voir
 `class_config.assert_model_matches_taxonomy`, déjà utilisé par les 4 outils
 de `src/review/`). Un run entraîné sous une taxonomie révolue doit être
 réentraîné pour être comparable, pas seulement réévalué.
@@ -69,6 +69,11 @@ COLOR_RECALL = {"light": "#eb6834", "dark": "#d95926"}     # slot 2 : orange
 SEQ_BLUE_LIGHT = ["#fcfcfb", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
 SEQ_BLUE_DARK = ["#1a1a19", "#10366b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb"]
 
+# Seuil sous lequel une classe est signalée dans les constats automatiques
+# (_diagnostics) comme problématique (rappel/précision trop bas). Valeur
+# ronde de repère, pas calibrée sur des données réelles - statut : question
+# ouverte. Choix possibles : un seuil unique plus strict/plus lâche, ou un
+# seuil différent par classe (ex. plus tolérant pour une classe rare).
 RECALL_WARN_THRESHOLD = 0.5
 PRECISION_WARN_THRESHOLD = 0.5
 
@@ -616,10 +621,10 @@ def generate_report(
 
     model = YOLO(str(weights_path))
 
-    # Garde-fou anti-réinterprétation de taxonomie (même bug/même correctif que les 4
-    # outils de src/review/, voir class_config.assert_model_matches_taxonomy et le
-    # journal du 27/08 "Diagnostic pré-run") : `model.val()` construit son tableau par
-    # classe à partir de `model.names` (EMBARQUÉ dans les poids au moment de
+    # Garde-fou anti-réinterprétation de taxonomie (même mécanisme que les 4 outils de
+    # src/review/, voir class_config.assert_model_matches_taxonomy) : `model.val()`
+    # construit son tableau par classe à partir de `model.names` (EMBARQUÉ dans les
+    # poids au moment de
     # l'entraînement), jamais à partir de `data_config_path`. Si la taxonomie a changé
     # depuis ce run (classe retirée/renommée, ID renuméroté), les métriques par classe
     # sont silencieusement scramblées - un ID peut désigner une classe différente
@@ -638,17 +643,14 @@ def generate_report(
     sections_html = []
     splits_payload: Dict[str, Dict] = {}
     any_split_evaluated = False
-    # Bug du 28/08/2026 ("la matrice de confusion n'affiche que des 0") : ce n'était PAS
-    # un arrondi de pourcentage (cm.summary() renvoie déjà des comptes bruts, affichés
-    # tels quels via int(val)) mais `plots=False` ci-dessous. Dans Ultralytics
-    # (ultralytics/models/yolo/detect/val.py), `ConfusionMatrix.process_batch()` - qui
-    # REMPLIT la matrice - n'est appelé QUE si `self.args.plots` est vrai ; avec
-    # plots=False la matrice reste intégralement à 0, y compris sur la diagonale, alors
-    # que les métriques P/R par classe (calculées séparément) restaient correctes -
-    # d'où un rapport avec des vrais chiffres partout SAUF la matrice. Fix : plots=True,
-    # mais redirigé vers un dossier temporaire (project=tmp_val_dir) pour éviter que les
-    # PNG qu'Ultralytics écrit dans ce cas (confusion_matrix.png, PR_curve.png...) ne
-    # polluent run_dir - ce dossier temporaire est jeté à la sortie du `with`.
+    # plots=True est nécessaire pour que la matrice de confusion soit remplie : dans
+    # Ultralytics (ultralytics/models/yolo/detect/val.py), `ConfusionMatrix.process_batch()`
+    # - qui remplit la matrice - n'est appelé que si `self.args.plots` est vrai ; avec
+    # plots=False la matrice resterait intégralement à 0 (y compris la diagonale), même si
+    # les métriques P/R par classe (calculées séparément) restent correctes indépendamment.
+    # Redirigé vers un dossier temporaire (project=tmp_val_dir) pour éviter que les PNG
+    # qu'Ultralytics écrit dans ce cas (confusion_matrix.png, PR_curve.png...) ne polluent
+    # run_dir - ce dossier temporaire est jeté à la sortie du `with`.
     with tempfile.TemporaryDirectory(prefix="pixelodyssey_val_") as tmp_val_dir:
         for split in splits:
             try:
@@ -698,7 +700,7 @@ def generate_report(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Génère le rapport de lecture HTML d'un run d'entraînement PixelOdyssey.")
-    parser.add_argument("--run", required=True, help="Dossier du run (ex: output/runs/baseline_yolo11n-seg_20260819_143000)")
+    parser.add_argument("--run", required=True, help="Dossier du run (ex: output/runs/baseline_yolo11n-seg_AAAAMMJJ_HHMMSS)")
     parser.add_argument("--data", default=None, help="Chemin vers data_config.yaml (par défaut : config/data_config.yaml du projet)")
     parser.add_argument("--weights", default="best.pt", help="Nom du fichier de poids à évaluer, dans <run>/weights/ (défaut: best.pt)")
     parser.add_argument("--splits", default="val,test", help="Splits à évaluer, séparés par des virgules (défaut: val,test)")

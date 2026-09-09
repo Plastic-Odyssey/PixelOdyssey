@@ -9,11 +9,10 @@ Luzia - lots "SL ..."), et génère un rapport de lecture SUR CE SOUS-ENSEMBLE
 SEUL, en réutilisant telle quelle la logique de métriques de
 training_report.py (aucune duplication de calcul).
 
-Cas d'usage (voir journal du 27/08/2026, "spécialisation Santa Luzia") : le
-modèle est entraîné sur TOUS les sites (SB + SL + A LEG, pipeline standard
-inchangé), mais on veut savoir s'il performe différemment sur Santa Luzia
-SPÉCIFIQUEMENT, sans le bruit des autres sites noyés dans le même split de
-test. Contrairement à un nouveau gel de banc de test (pipeline à relancer,
+Cas d'usage : le modèle est entraîné sur TOUS les sites (SB + SL + A LEG,
+pipeline standard inchangé), mais on veut savoir s'il performe différemment
+sur Santa Luzia SPÉCIFIQUEMENT, sans le bruit des autres sites noyés dans le
+même split de test. Contrairement à un nouveau gel de banc de test (pipeline à relancer,
 donnée d'entraînement modifiée), cet outil ne touche à AUCUNE donnée : il
 lit le split déjà figé tel quel et restreint seulement l'ÉVALUATION à un
 sous-ensemble - zéro impact sur 2_split_dataset, 4_sliced_dataset, et sur

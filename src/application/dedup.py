@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 PixelOdyssey - Dédoublonnage INTER-PHOTOS des détections (pipeline
-"application"). Brique demandée en priorité par Jame le 04/09/2026 - voir
-journal_decisions_pipeline.md pour la discussion de conception complète.
+"application").
 
 Distinct du dédoublonnage INTRA-photo (recouvrement des tuiles 640px internes
 à UNE photo, déjà résolu par `src/review/tiled_inference.py::nms_merge`,
@@ -14,7 +13,7 @@ avec son propre repère pixel - impossible à comparer par IoU en pixels,
 d'où la reprojection en coordonnées sol (mètres) faite par geolocation.py en
 amont.
 
-Méthode (décidée le 04/09/2026) :
+Méthode :
 1. Grouper par classe (deux détections de classes différentes ne sont jamais
    candidates à un doublon - même convention que `nms_merge`/`matching.py`).
 2. Regrouper en clusters ("même objet réel vu plusieurs fois") par IoU des
@@ -23,14 +22,13 @@ Méthode (décidée le 04/09/2026) :
    à la fois. Index spatial (STRtree) pour éviter une comparaison O(n²) sur
    un batch de plusieurs milliers de détections.
    Pourquoi l'IoU au sol plutôt qu'une distance entre centroïdes GPS : la
-   précision GPS du DJI Air 2S en GNSS seul est ±1.5m (spec DJI officielle,
-   voir échange du 04/09/2026) - largement suffisant pour confondre deux
-   déchets DISTINCTS mais proches (ex : un tas de déchets rassemblés, où
-   plusieurs objets peuvent être à moins d'1m les uns des autres) si on ne
-   comparait que des points. L'IoU de forme reste discriminant même avec du
-   bruit GPS, contrairement à une distance de centroïdes.
-3. Dans chaque cluster, sélection du "gagnant" avec les critères choisis par
-   Jame le 04/09/2026, DANS CET ORDRE :
+   précision GPS du DJI Air 2S en GNSS seul est ±1.5m (spec DJI officielle) -
+   largement suffisant pour confondre deux déchets DISTINCTS mais proches
+   (ex : un tas de déchets rassemblés, où plusieurs objets peuvent être à
+   moins d'1m les uns des autres) si on ne comparait que des points. L'IoU de
+   forme reste discriminant même avec du bruit GPS, contrairement à une
+   distance de centroïdes.
+3. Dans chaque cluster, sélection du "gagnant", DANS CET ORDRE :
    a. Disqualification : un masque touchant le bord de sa photo D'ORIGINE
       (pas un bord de tuile 640px, déjà géré ailleurs) est écarté SI le
       cluster contient au moins une version qui ne touche aucun bord. Si
@@ -38,39 +36,36 @@ Méthode (décidée le 04/09/2026) :
       aucune disqualification n'est possible - on garde tout le monde pour
       l'étape suivante.
    b. Parmi les survivants, on garde celui dont le masque est le plus proche
-      du CENTRE de sa photo d'origine (pas le plus grand - décision du
-      04/09/2026, revenant sur le premier critère envisagé).
+      du CENTRE de sa photo d'origine (pas le plus grand : un objet proche du
+      bord d'une photo peut être coupé/déformé par la perspective, le
+      centrage est un meilleur indicateur de fidélité - critère tranché).
    c. Égalité de centrage (rare) : on départage par confiance décroissante.
 
 Exemple :
     from src.application.dedup import PhotoDetection, deduplicate_detections
     winners = deduplicate_detections(all_detections, iou_threshold=0.3)
 
-CORRECTIF (06/09/2026) - le dédoublonnage par IoU seul NE SUFFIT PAS en
-pratique : diagnostic sur un vrai batch (voir journal_decisions_pipeline.md,
-entrée du 06/09) montrant qu'un même objet réel (une cagette), vu par 7
-photos différentes à moins de 0.5m les unes des autres, a un IoU quasi NUL
-(0% pour la plupart des paires, max observé 26%) entre ses reprojections -
-le géoréférencement direct (sans ajustement de faisceaux inter-photos, voir
+Limite connue de l'IoU seul : un même objet réel vu par plusieurs photos très
+rapprochées peut avoir un IoU quasi nul entre ses reprojections - le
+géoréférencement direct (sans ajustement de faisceaux inter-photos, voir
 geolocation.py) introduit assez de bruit de position/cap PAR PHOTO pour que
 la FORME reprojetée d'un même objet ne se recoupe plus du tout d'une photo à
-l'autre, même si le point reste proche. Baisser `iou_threshold` déplace le
-problème (vérifié : ne fusionne jamais complètement ce genre de cluster même
-à 0.02, tout en commençant à fusionner à tort des objets distincts ailleurs
-dans une zone dense dès 0.1).
+l'autre, même si le point reste proche. Baisser `iou_threshold` ne règle pas
+ce cas sans risquer de fusionner à tort des objets distincts dans une zone
+dense.
 
-`deduplicate_detections_visual` (voir plus bas) est la réponse : décorréler
-le critère de correspondance de la géométrie reprojetée (peu fiable ici) en
-comparant l'APPARENCE des chips au moyen d'un modèle de similarité visuelle
-pré-entraîné (voir visual_similarity.py) - candidats générés par PROXIMITÉ DE
-CENTROÏDE (pas par intersection de polygone, qui rate justement les cas ci-
-dessus), fusion décidée par similarité visuelle >= seuil, EN PLUS de l'IoU
-(une vraie forte intersection reste un signal gratuit et fiable, pas besoin
-d'un embedding pour ça - voir _cluster_by_iou_or_visual_similarity).
-`deduplicate_detections` (IoU seul, ci-dessous) reste disponible telle
-quelle - utile en comparaison, ou pour un batch où le bruit de
-géoréférencement serait un jour réduit (calibration/correction de cap,
-voir points ouverts du 04/09).
+`deduplicate_detections_visual` (voir plus bas) est la réponse à cette
+limite : décorréler le critère de correspondance de la géométrie reprojetée
+(peu fiable dans ce cas) en comparant l'APPARENCE des chips au moyen d'un
+modèle de similarité visuelle pré-entraîné (voir visual_similarity.py) -
+candidats générés par PROXIMITÉ DE CENTROÏDE (pas par intersection de
+polygone, qui rate justement les cas ci-dessus), fusion décidée par
+similarité visuelle >= seuil, EN PLUS de l'IoU (une vraie forte intersection
+reste un signal gratuit et fiable, pas besoin d'un embedding pour ça - voir
+_cluster_by_iou_or_visual_similarity). `deduplicate_detections` (IoU seul,
+ci-dessous) reste disponible telle quelle - utile en comparaison, ou pour un
+batch où le bruit de géoréférencement serait un jour réduit
+(calibration/correction de cap - question ouverte).
 """
 
 from dataclasses import dataclass
@@ -98,9 +93,9 @@ class PhotoDetection:
     (nécessaire pour comparer entre photos différentes - voir
     geolocation.pixel_polygon_to_local_polygon).
 
-    `embedding` (optionnel, ajouté le 06/09/2026) : vecteur de similarité
-    visuelle pré-calculé (voir visual_similarity.py), nécessaire UNIQUEMENT
-    pour `deduplicate_detections_visual` - None pour un usage IoU seul
+    `embedding` (optionnel) : vecteur de similarité visuelle pré-calculé
+    (voir visual_similarity.py), nécessaire UNIQUEMENT pour
+    `deduplicate_detections_visual` - None pour un usage IoU seul
     (`deduplicate_detections`) ou dans les tests synthétiques existants, qui
     restent valides sans le renseigner."""
     photo_id: str
@@ -196,8 +191,8 @@ def _cluster_by_iou(detections: List[PhotoDetection], iou_threshold: float) -> L
 
 
 def select_best_in_cluster(cluster: List[PhotoDetection]) -> Tuple[PhotoDetection, bool]:
-    """Applique la règle de sélection du 04/09/2026 (voir docstring du
-    module) à un cluster de détections jugées "même objet réel".
+    """Applique la règle de sélection décrite dans la docstring du module
+    à un cluster de détections jugées "même objet réel".
 
     Retourne (détection gagnante, au_moins_une_disqualification_appliquée) -
     le 2e élément sert uniquement au reporting (DedupReport ci-dessous).
@@ -232,9 +227,10 @@ def deduplicate_detections(
     provenant de PLUSIEURS photos d'un même batch. Regroupe par classe,
     clusterise par IoU au sol, sélectionne un gagnant par cluster.
 
-    `iou_threshold` : pas encore calibré empiriquement (Jame, 04/09/2026 :
-    "on fera des essais") - exposé en paramètre explicite pour faciliter le
-    réglage plutôt que codé en dur.
+    `iou_threshold` (0.3 par défaut) : seuil de fusion géométrique - question
+    ouverte, pas encore calibré empiriquement sur un batch réel ; exposé en
+    paramètre explicite (plutôt que codé en dur) pour faciliter les essais de
+    réglage.
     """
     by_class: Dict[int, List[PhotoDetection]] = {}
     for d in detections:
@@ -276,39 +272,25 @@ def _cluster_by_iou_or_visual_similarity(
     """Comme `_cluster_by_iou`, mais deux détections sont aussi fusionnées si
     leurs CENTROÏDES sont à moins de `distance_threshold_m` ET que leur
     similarité visuelle (cosinus des `embedding`) atteint `similarity_threshold`
-    - même sans le moindre recouvrement géométrique (voir le correctif du
-    06/09/2026 en tête de module : le cas réel qui a motivé cette fonction
-    avait un IoU nul entre la plupart des vues d'un même objet).
+    - même sans le moindre recouvrement géométrique (voir la limite de l'IoU
+    seul décrite en tête de module).
 
-    CORRECTIF DE PERFORMANCE (06/09/2026, 2e passe) : la toute première
-    version de cette fonction cherchait les candidats de proximité en
-    bufferisant le POLYGONE COMPLET de chaque détection (`geom.buffer(...)`)
-    avant de requêter l'index spatial - sur un vrai batch (essai1, 3044
-    détections mono-classe, donc traitées en UN SEUL groupe), ça a fait
-    tourner le pipeline plus d'une heure sans terminer (tué manuellement par
-    Jame). Cause : bufferiser un polygone de segmentation (souvent des
-    dizaines à quelques centaines de sommets, aucune simplification en amont)
-    est une opération GEOS coûteuse, répétée pour CHAQUE détection, puis
-    testée par intersection exacte contre chaque candidat - sur une zone
-    dense (justement le genre de zone où ce module est le plus utile), le
-    nombre de candidats et le coût par candidat explosent ensemble.
-    Corrigé en séparant les deux critères de fusion, chacun sur l'index le
-    moins coûteux qui lui suffit :
+    Les deux critères de fusion utilisent chacun l'index spatial le moins
+    coûteux qui leur suffit, pour éviter de bufferiser un polygone de
+    segmentation (souvent des dizaines à quelques centaines de sommets) - une
+    opération GEOS coûteuse si répétée pour chaque détection :
     - IoU : index spatial sur les polygones BRUTS (jamais bufferisés),
-      `predicate=\"intersects\"` - exactement l'approche déjà éprouvée rapide
-      de `_cluster_by_iou` sur ce même batch (aucune fusion géométrique n'est
-      possible sans intersection réelle, pas besoin d'élargir la recherche).
+      `predicate=\"intersects\"` - aucune fusion géométrique n'est possible
+      sans intersection réelle, pas besoin d'élargir la recherche.
     - Similarité visuelle : index spatial sur les seuls CENTROÏDES (des
       points, jamais des polygones complets) avec `predicate=\"dwithin\"` -
       une requête de distance native GEOS, sans construire le moindre
       polygone bufferisé côté détection ni côté requête ; son coût ne dépend
-      donc plus jamais de la complexité des contours de segmentation.
-    Testé avec un batch synthétique dense (3000 détections, ~120/m²,
-    contours à 64 sommets - bien plus dense que tout ce qui a été observé
-    dans essai1) : ~10s au total, contre plusieurs minutes pour l'ancienne
-    approche à la même densité, et le mécanisme responsable de l'heure de
-    blocage (bufferisation répétée de polygones complexes) est purement et
-    simplement éliminé plutôt qu'accéléré marginalement."""
+      donc jamais de la complexité des contours de segmentation.
+    Cette séparation est importante sur une zone dense (justement le genre de
+    zone où ce module est le plus utile) : bufferiser systématiquement les
+    polygones ferait exploser à la fois le nombre de candidats et le coût par
+    candidat, alors qu'une requête de distance sur des points reste bornée."""
     n = len(detections)
     if n <= 1:
         return [[i] for i in range(n)]
@@ -362,19 +344,19 @@ def deduplicate_detections_visual(
     """Comme `deduplicate_detections`, mais chaque `PhotoDetection` doit avoir
     son `embedding` renseigné (voir visual_similarity.py::compute_embeddings)
     - fusionne par IoU géométrique OU par similarité visuelle entre
-    détections proches (voir `_cluster_by_iou_or_visual_similarity` et le
-    correctif du 06/09/2026 en tête de module).
+    détections proches (voir `_cluster_by_iou_or_visual_similarity` et la
+    limite de l'IoU seul en tête de module).
 
-    `similarity_threshold` (0.5 par défaut, proposé par Jame le 06/09/2026) :
-    PAS calibré au-delà d'un seul exemple manuel (une similarité de 0.55-0.76
-    observée entre 3 vues confirmées d'un même objet, contre 0.40-0.44 pour
-    un objet visuellement différent dans le même voisinage) - à affiner sur
-    plus d'exemples réels, même logique que tous les autres seuils de ce
-    pipeline (iou_threshold, conf_threshold...).
+    `similarity_threshold` (0.5 par défaut) : question ouverte - calibré sur
+    un seul exemple manuel (similarité 0.55-0.76 observée entre vues
+    confirmées d'un même objet, contre 0.40-0.44 pour un objet visuellement
+    différent dans le même voisinage), à affiner sur plus d'exemples réels,
+    même statut que les autres seuils de ce pipeline (iou_threshold,
+    conf_threshold...).
 
-    `distance_threshold_m` (2m par défaut) : marge de recherche des candidats
-    - PAS calibrée non plus, à resserrer/desserrer selon le bruit de position
-    réellement observé sur d'autres batches."""
+    `distance_threshold_m` (2m par défaut) : marge de recherche des
+    candidats - question ouverte également, à resserrer/desserrer selon le
+    bruit de position réellement observé sur d'autres batches."""
     by_class: Dict[int, List[PhotoDetection]] = {}
     for d in detections:
         by_class.setdefault(d.class_id, []).append(d)

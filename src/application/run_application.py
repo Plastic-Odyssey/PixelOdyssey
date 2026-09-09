@@ -8,7 +8,7 @@ Entrée : un dossier de photos drone brutes (jpg/png, recouvrement de vol
 un modèle opérationnel (registre config/models_registry.yaml), un seuil de
 confiance final.
 
-Étapes (voir la conception complète du 04/09/2026, journal_decisions_pipeline.md) :
+Étapes :
 1. Inventaire + validation du batch (inventory.py) - géolocalisation directe
    NAÏVE (GPS+altitude+cap+GSD), PAS une orthorectification WebODM - compromis
    accepté explicitement pour ce cas d'usage (carte de densité à l'échelle
@@ -18,51 +18,56 @@ confiance final.
    reconstruire ici pour ce niveau).
 3. Reprojection de chaque détection en coordonnées sol (mètres) via
    geolocation.py.
-4. Dédoublonnage INTER-photos (dedup.py - la brique neuve de ce pipeline).
-5. Seuil de confiance final appliqué APRÈS le dédoublonnage (pas avant -
-   décision du 04/09/2026 : l'inférence tuilée utilise un seuil large en
-   1ère passe pour ne pas perdre une détection dont la version la plus
-   complète, ailleurs dans le batch, aurait une meilleure confiance).
+4. Dédoublonnage INTER-photos (dedup.py) : IoU géométrique toujours actif,
+   plus une composante optionnelle de similarité visuelle (voir
+   `--dedup-method` plus bas). Les imagettes de TOUTES les détections
+   brutes sont générées EN MÉMOIRE avant le dédoublonnage (pas seulement
+   celles des gagnantes), car la similarité visuelle se calcule dessus ;
+   seules les imagettes des détections finalement retenues sont écrites
+   sur disque (voir `_build_crop_images`/`_save_winner_crops`).
+5. Seuil de confiance final appliqué APRÈS le dédoublonnage (pas avant) :
+   l'inférence tuilée utilise un seuil large en 1ère passe pour ne pas
+   perdre une détection dont la version la plus complète, ailleurs dans
+   le batch, aurait une meilleure confiance.
 6. Export GeoJSON (une Feature par détection retenue, ouvrable dans QGIS -
-   déjà utilisé dans ce projet, voir guide_mesure_surface_bache_qgis.md) +
-   imagettes JPEG avec contour de masque (mêmes conventions visuelles que
+   voir guide_mesure_surface_bache_qgis.md) + imagettes JPEG avec contour de
+   masque (mêmes conventions visuelles que
    `geo_density_map.build_detection_crops`, adaptées à des photos brutes
-   plutôt qu'à un GeoTIFF).
+   plutôt qu'à un GeoTIFF). Chaque détection retenue reçoit une surface au
+   sol (`area_m2`, aire de `local_polygon` - déjà en mètres réels via
+   geolocation.py, pas de GSD séparé nécessaire ici contrairement au mode
+   orthomosaïque) et un poids estimé (`weight_kg`, voir
+   weight_estimation.py - ESTIMATION PROVISOIRE, aucune table de conversion
+   calibrée n'existe encore, question ouverte), pour alimenter le panneau
+   de statistiques agrégées de la carte web (voir web_map.py/stats_panel.py).
 
-PAS ENCORE FAIT (prochaine étape, pas ce tour-ci) : rendu carte interactive
-Leaflet+satellite - Jame a confirmé le 04/09/2026 vouloir réutiliser
-`src/review/geo_density_map.py` "à 100%" plutôt que d'en reconstruire un
-nouveau ; ce module produit déjà tout ce qu'un tel rendu consommerait
-(GeoJSON + crops), le branchement reste à faire une fois cette brique
-validée. FAIT depuis (voir src/application/web_map.py).
+Rendu carte interactive : voir `src/application/web_map.py`, qui réutilise
+`src/review/geo_density_map.py` (GeoJSON + crops produits ci-dessus).
 
-CORRECTIF (06/09/2026) - dédoublonnage par similarité visuelle en plus de
-l'IoU (voir dedup.py::deduplicate_detections_visual et sa docstring pour le
-diagnostic complet) : l'étape 4 ci-dessus ne suffisait pas seule, un même
-objet réel pouvant avoir un IoU quasi nul entre ses reprojections (bruit de
-géoréférencement direct). Conséquence sur l'ordre des étapes : les imagettes
-doivent maintenant être générées EN MÉMOIRE pour TOUTES les détections
-brutes AVANT le dédoublonnage (pas seulement pour les gagnantes après, comme
-avant) - c'est sur ces imagettes que la similarité visuelle est calculée.
-Seules les imagettes des détections finalement retenues sont écrites sur
-disque (voir `_build_crop_images`/`_save_winner_crops`).
+`--dedup-method` - question ouverte, tranchée pour l'instant en faveur du
+100% local :
+- `iou` (défaut) : géométrie seule, 100% local, aucun appel réseau - mais sur
+  données réelles ne fusionne quasiment aucun doublon (bruit de
+  géoréférencement direct de la géolocalisation NAÏVE du point 1) : le
+  dédoublonnage inter-photos reste un problème ouvert avec ce choix,
+  accepté explicitement pour privilégier l'exécution terrain 100% locale.
+- `visual` : IoU + similarité visuelle (DINOv2 via `transformers`/HuggingFace,
+  voir dedup.py::deduplicate_detections_visual). Résout mieux le
+  dédoublonnage mais dépend d'un appel réseau (même modèle déjà en cache)
+  qui ralentit trop l'exécution en conditions de terrain (connexion
+  faible/absente), sauf à imposer `HF_HUB_OFFLINE=1` - alternative écartée
+  au profit d'une exécution garantie 100% locale. Reste disponible en
+  opt-in pour un contexte avec connexion fiable.
 
-DÉCISION (07/09/2026) - `--dedup-method` repassé à `iou` par défaut (était
-`visual`) : le mode `visual` fonctionne (voir correctif de perf du 07/09 dans
-dedup.py) mais dépend de `transformers`/HuggingFace, dont l'appel réseau -
-même modèle déjà en cache - ralentit trop l'exécution en conditions de
-terrain (connexion faible/absente). Décision explicite de l'utilisateur,
-après alternative proposée (mode 100% hors-ligne via `HF_HUB_OFFLINE=1`) et
-refusée : priorité donnée à une exécution 100% locale, MÊME AU PRIX du
-dédoublonnage inter-photos qui reste alors non résolu (voir diagnostic du
-06/09/2026 : l'IoU seul ne fusionne quasiment rien sur données réelles). Le
-mode `visual` reste disponible en opt-in (`--dedup-method visual`) pour un
-contexte avec connexion fiable. Voir journal_decisions_pipeline.md (07/09)
-pour le détail de l'arbitrage.
+Point d'entrée recommandé pour un usage normal : `run_inference.py` (pas ce
+module directement) - il détecte automatiquement le mode batch/orthomosaïque
+depuis l'entrée fournie et enchaîne, après la carte, les exports additifs
+(stats .xlsx, lot CVAT compressé) que CE module seul ne produit pas. Cette
+CLI directe reste utile pour un diagnostic ciblé sur le mode batch seul.
 
 Exemple :
     python -m src.application.run_application --batch-dir "chemin/vers/photos" \\
-        --model mono_class_v1 --conf-threshold 0.3 --output-dir output/application_runs/essai1
+        --model mono_class_v1 --conf-threshold 0.3 --output-dir "E:\\PixelOdyssey\\4. Results\\2_prediction\\essai1"
 """
 
 import argparse
@@ -83,6 +88,8 @@ from src.application.geolocation import (
 )
 from src.application.inventory import scan_batch
 from src.application.model_registry import load_operational_models, resolve_model_choice
+from src.application.paths import DEFAULT_PREDICTION_DIR
+from src.application.weight_estimation import estimate_weight_kg
 from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
 from src.review.tiled_inference import make_ultralytics_predict_fn, predict_parent_image
 
@@ -159,13 +166,10 @@ def _make_crop_image(img: Image.Image, img_w: int, img_h: int, det: PhotoDetecti
 
 def _build_crop_images(detections: List[PhotoDetection]) -> List[Image.Image]:
     """Génère une imagette EN MÉMOIRE (pas encore écrite sur disque) pour
-    CHAQUE détection brute passée en entrée - nécessaire depuis le correctif
-    du 06/09/2026 : le dédoublonnage par similarité visuelle a besoin d'un
-    chip pour TOUTES les vues candidates, pas seulement pour les gagnantes
-    (qu'on ne connaît qu'après). Regroupe par photo source pour n'ouvrir
-    chaque photo qu'une seule fois (même optimisation qu'avant), même si le
-    volume traité est maintenant plus grand (toutes les détections brutes,
-    pas seulement les gagnantes).
+    CHAQUE détection brute passée en entrée - nécessaire car le dédoublonnage
+    par similarité visuelle a besoin d'un chip pour TOUTES les vues
+    candidates, pas seulement pour les gagnantes (qu'on ne connaît qu'après).
+    Regroupe par photo source pour n'ouvrir chaque photo qu'une seule fois.
 
     Point de vigilance mémoire (pas encore rencontré en pratique, à surveiller
     si un batch produit beaucoup plus que quelques milliers de détections
@@ -189,8 +193,7 @@ def _build_crop_images(detections: List[PhotoDetection]) -> List[Image.Image]:
 def _save_winner_crops(winners: List[PhotoDetection], winner_images: List[Image.Image], output_dir: Path) -> Dict[int, str]:
     """Écrit sur disque les imagettes déjà construites en mémoire des
     détections FINALEMENT retenues (voir `_build_crop_images`) - ne rouvre
-    aucune photo source, contrairement à l'ancienne version de cette
-    fonction (avant le 06/09/2026), puisque l'image existe déjà."""
+    aucune photo source, puisque l'image existe déjà."""
     crops_dir = output_dir / "crops"
     crops_dir.mkdir(parents=True, exist_ok=True)
 
@@ -217,7 +220,10 @@ def run_application(
     if dedup_method not in ("iou", "visual"):
         raise ValueError(f"dedup_method doit être 'iou' ou 'visual', reçu {dedup_method!r}.")
     if output_dir is None:
-        output_dir = f"output/application_runs/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Sortie dans `4. Results/2_prediction/`, partagée avec le mode
+        # orthomosaïque (voir paths.py). Préfixe "batch_" pour rester
+        # identifiable dans le dossier commun, sans sous-dossier dédié par mode.
+        output_dir = f"{DEFAULT_PREDICTION_DIR}/batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -307,17 +313,39 @@ def run_application(
         centroid_lon, centroid_lat = local_xy_to_lonlat(
             det.local_polygon.centroid.x, det.local_polygon.centroid.y, origin_lon, origin_lat
         )
+        # Surface au sol (m²) : `local_polygon` est déjà exprimé en mètres
+        # réels par geolocation.py (plan tangent local) - contrairement au
+        # mode orthomosaïque (geo_density_map.py), aucun GSD séparé n'est
+        # nécessaire ici, l'aire shapely est directement en m². Poids estimé
+        # à partir de cette aire - voir weight_estimation.py (PROVISOIRE, non
+        # calibré, voir sa docstring) ; None pour les classes où la surface
+        # n'est pas un prédicteur exploitable (Cordage_Filet, Debris_Divers).
+        class_name = target_names.get(det.class_id, str(det.class_id))
+        area_m2 = det.local_polygon.area
+        weight_kg = estimate_weight_kg(class_name, area_m2)
         features.append({
             "type": "Feature",
             "geometry": mapping(Polygon(lonlat_coords)),
             "properties": {
                 "class_id": det.class_id,
-                "class_name": target_names.get(det.class_id, str(det.class_id)),
+                "class_name": class_name,
                 "confidence": round(det.confidence, 4),
                 "source_photo": Path(det.photo_id).name,
                 "crop_file": crop_filenames.get(i),
                 "centroid_lon": centroid_lon,
                 "centroid_lat": centroid_lat,
+                "area_m2": round(area_m2, 4),
+                "weight_kg": round(weight_kg, 4) if weight_kg is not None else None,
+                # Champs additifs (non consommés par web_map.py) - persistent
+                # la géométrie PIXEL dans le repère de la photo source, pour
+                # que predictions_diagnostic.py/export_predictions_to_cvat.py
+                # puissent reconstruire un lot d'import CVAT plus tard SANS
+                # relancer l'inférence (même philosophie que
+                # rapport_metrics.json pour training_report.py/compare_runs.py).
+                "source_photo_path": str(det.photo_id),
+                "photo_width_px": det.photo_width_px,
+                "photo_height_px": det.photo_height_px,
+                "pixel_polygon": [[round(x, 2), round(y, 2)] for x, y in det.pixel_polygon.exterior.coords],
             },
         })
 
@@ -352,7 +380,7 @@ def main():
     parser.add_argument("--dedup-distance-threshold-m", type=float, default=DEFAULT_DEDUP_DISTANCE_THRESHOLD_M,
                          help="Rayon (mètres, méthode 'visual' uniquement) de recherche de candidats autour de "
                               "chaque détection - au-delà, deux détections ne sont jamais comparées visuellement.")
-    parser.add_argument("--output-dir", default=None, help="Dossier de sortie (défaut : output/application_runs/<horodatage>).")
+    parser.add_argument("--output-dir", default=None, help="Dossier de sortie (défaut : 4. Results/2_prediction/batch_<horodatage>, voir paths.py).")
     args = parser.parse_args()
 
     run_application(

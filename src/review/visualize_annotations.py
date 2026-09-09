@@ -51,7 +51,7 @@ from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, load_class_config
 from src.data.raw_dataset import VALID_IMG_EXTS
 from src.data.slice_dataset import SLICED_DIR
 
-BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
+from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py
 VIEWER_DIR = os.path.join(BASE_DIR, "8_annotation_viewer")
 
 SPLITS = ["train", "val", "test"]

@@ -11,21 +11,55 @@ FENÊTRE via `rasterio` - nécessaire pour des fichiers de plusieurs centaines
 de Mo à plusieurs Go - et conserve le géoréférencement du GeoTIFF (CRS +
 transformation affine) pour convertir les détections en coordonnées réelles.
 
-Ce module ne modifie jamais `1_annotated_dataset` et ne produit aucun export
-CVAT - c'est une visualisation, à partir des prédictions du modèle seul (pas
-de comparaison à une vérité terrain, contrairement à
-`visualize_predictions.py`).
+Ce module ne modifie jamais `1_annotated_dataset` et ne produit lui-même
+aucun export CVAT - c'est avant tout une visualisation, à partir des
+prédictions du modèle seul (pas de comparaison à une vérité terrain,
+contrairement à `visualize_predictions.py`). Écrit tout de même
+`detections.geojson` à côté de la carte (même convention que
+`run_application.py`, mode batch) - lu ensuite par
+`predictions_diagnostic.py` (export .xlsx) et
+`export_predictions_to_cvat.py` (lot CVAT, avec découpage en grille sous
+`CVAT_MAX_PIXELS` pour ce mode, l'orthomosaïque entière étant presque
+toujours trop lourde pour un import direct).
 
 Géométrie de tuilage : réutilise `tiling_geometry.iter_tile_windows` (même
 source de vérité que l'entraînement) et `tiled_inference.nms_merge` pour
 fusionner les doublons de recouvrement entre fenêtres adjacentes.
 
+Vit sous `src/application/`, avec le reste du pipeline application (mode
+batch et mode orthomosaïque, plus leurs modules de support) - notamment
+`src/application/vendor/` (Leaflet vendorisé), partagé avec `web_map.py`.
+
+Le gabarit HTML/JS de la carte (panneau, popup, légende+filtre par classe,
+curseur de confiance, statistiques agrégées, bascule Points/Densité) est
+PARTAGÉ avec `web_map.py` via `map_builder.render_map_page` - la SEULE
+différence visuelle avec la carte du mode batch est le fond : ici,
+l'orthomosaïque entière (pyramide de tuiles locale, voir
+`generate_tile_pyramid`) par-dessus le satellite, à opacité FIXE (1.0 -
+curseur de transparence remplacé par le curseur de confiance, présent dans
+les deux modes). La surface au sol (`area_m2`) est ici dérivée du GSD natif
+du GeoTIFF (aire en pixels du masque x aire d'un pixel en m² dans le CRS
+natif, voir `_pixel_area_m2`) - différent de run_application.py, où
+`local_polygon` est déjà exprimé en mètres réels par geolocation.py.
+
+Point de vigilance sur la taxonomie si ce module est appelé DIRECTEMENT
+(plutôt que via `run_inference.py`) : sa propre CLI attend un chemin de
+poids brut (`--model`) et un `--class-config` optionnel qui retombe
+SILENCIEUSEMENT sur la taxonomie 7-classes par défaut si omis - un modèle
+mono-classe (ou toute autre variante) choisi sans préciser `--class-config`
+serait alors comparé à tort à cette taxonomie par défaut. `run_inference.py`
+résout ce risque en résolvant le modèle (et son `taxonomy_config`) via le
+registre commun `config/models_registry.yaml` AVANT d'appeler ce module -
+c'est le point d'entrée recommandé pour un usage normal ; cette CLI directe
+reste utile pour un diagnostic ponctuel avec un poids hors registre.
+
 Entrée : --tif (orthomosaïque GeoTIFF), --model (modèle entraîné, best.pt).
 Sortie : une page HTML autonome (carte Leaflet + tuiles locales de
-l'orthomosaïque) sous 7_density_maps/<run_id>/index.html par défaut.
+l'orthomosaïque) sous `4. Results/2_prediction/ortho_<horodatage>/index.html`
+par défaut (voir paths.py).
 
 Exemple :
-    python -m src.review.geo_density_map --tif "chemin/vers/orthomosaique.tif" --model chemin/vers/best.pt
+    python -m src.application.geo_density_map --tif "chemin/vers/orthomosaique.tif" --model chemin/vers/best.pt
 """
 
 import argparse
@@ -47,38 +81,20 @@ from rasterio.transform import from_bounds as transform_from_bounds
 from rasterio.warp import calculate_default_transform
 from rasterio.warp import transform as warp_transform
 from rasterio.warp import transform_bounds as warp_transform_bounds
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, mapping
 
+from src.application.map_builder import render_map_page
+from src.application.paths import DEFAULT_PREDICTION_DIR
+from src.application.stats_panel import compute_aggregate_stats
+from src.application.weight_estimation import estimate_weight_kg
 from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
 from src.data.tiling_geometry import iter_tile_windows
 from src.review.matching import LabeledPolygon
 from src.review.tiled_inference import PredictTileFn, make_ultralytics_predict_fn, nms_merge
 
-# Même racine numérotée que les autres sorties du pipeline (5_review_dataset,
-# 6_prediction_viewer).
-BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
-DENSITY_MAPS_DIR = os.path.join(BASE_DIR, "7_density_maps")
-
 WGS84 = "EPSG:4326"
 
-VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
-
-
-def _read_vendor(filename: str) -> str:
-    """Lit une librairie JS/CSS tierce vendorisée dans src/review/vendor/
-    (Leaflet + plugin leaflet.heat) pour l'embarquer directement dans la page
-    plutôt que de la charger depuis un CDN.
-
-    Entrée : nom de fichier sous src/review/vendor/.
-    Sortie : contenu du fichier (str)."""
-    path = VENDOR_DIR / filename
-    if not path.exists():
-        raise RuntimeError(
-            f"Librairie vendorisée manquante : {path}. Voir la docstring de "
-            f"_read_vendor() - à télécharger une fois depuis cdnjs (leaflet "
-            f"1.9.4 et leaflet.heat 0.2.0) et à conserver dans le repo."
-        )
-    return path.read_text(encoding="utf-8")
+MODE_LABEL = "Orthomosaïque (GeoTIFF unique)"
 
 
 def predict_geotiff_windowed(
@@ -158,6 +174,32 @@ def pixels_to_lonlat(
         ys_native.append(y_geo)
     lons, lats = warp_transform(crs, WGS84, xs_native, ys_native)
     return list(zip(lons, lats))
+
+
+def _pixel_area_m2(transform, crs) -> Optional[float]:
+    """Aire (m²) d'UN pixel de l'orthomosaïque, dérivée directement de la
+    transformation affine du GeoTIFF - nécessaire pour convertir l'aire en
+    pixels d'un masque de détection en une surface au sol réelle (voir
+    run_geo_density_map, `area_m2` de chaque détection).
+
+    Suppose un CRS PROJETÉ en mètres (le cas standard des orthomosaïques
+    WebODM du projet, ex: UTM zone 26N/EPSG:32626) et une transformation sans
+    rotation (`transform.b == transform.d == 0`, vrai pour un export WebODM
+    standard) - dans ce cas, l'aire d'un pixel est simplement `abs(a * e)`
+    (a = largeur de pixel, e = hauteur de pixel, signée car l'axe image
+    pointe vers le bas). Statut : hypothèse tranchée pour les orthomosaïques
+    WebODM du projet.
+
+    Retourne None (plutôt qu'un nombre silencieusement faux) si le CRS est
+    GÉOGRAPHIQUE (degrés, pas mètres - ex: EPSG:4326 brut) : dans ce cas
+    `transform.a`/`transform.e` seraient en degrés, et le produit ne serait pas
+    une aire en m². Aucune orthomosaïque du projet n'est actuellement dans ce
+    cas, mais mieux vaut ne pas estimer de surface/poids du tout que
+    d'afficher un chiffre faux de plusieurs ordres de grandeur.
+    """
+    if crs is not None and crs.is_geographic:
+        return None
+    return abs(transform.a * transform.e)
 
 
 def build_detection_crops(
@@ -349,215 +391,6 @@ def generate_tile_pyramid(
     }
 
 
-def _build_html(
-    tile_min_zoom: int,
-    tile_max_zoom: int,
-    sw: Tuple[float, float],
-    ne: Tuple[float, float],
-    detections: List[Dict],
-    source_name: str,
-    model_name: str,
-) -> str:
-    """Construit la page HTML autonome (Leaflet + plugin leaflet.heat
-    vendorisés, voir `_read_vendor`) à ouvrir directement dans un navigateur -
-    volontairement pas publiée comme Artifact claude.ai, dont la CSP
-    bloquerait le fond de carte satellite et les tuiles de l'orthomosaïque.
-
-    Le fond orthomosaïque est un `L.tileLayer` pointant vers le dossier local
-    `tiles/{z}/{x}/{y}.png` (chemin relatif à ce fichier HTML - les deux
-    doivent rester ensemble). Chaque détection est dessinée comme un vrai
-    polygone (`d.polygon`, le contour du masque reprojeté en lon/lat) avec un
-    petit point centré en complément pour rester cliquable à faible zoom ; le
-    jugement fin de la qualité du masque se fait dans le popup au clic, via
-    le chip natif `d.crop` (voir `build_detection_crops`).
-
-    Entrée : bornes de zoom et géographiques de la pyramide de tuiles,
-    détections (dicts JSON-sérialisables), nom de la source et du modèle.
-    Sortie : contenu HTML de la page (str)."""
-    detections_json = json.dumps(detections, ensure_ascii=False)
-    center_lat = (sw[1] + ne[1]) / 2
-    center_lon = (sw[0] + ne[0]) / 2
-    leaflet_css = _read_vendor("leaflet.min.css")
-    leaflet_js = _read_vendor("leaflet.min.js")
-    leaflet_heat_js = _read_vendor("leaflet-heat.js")
-
-    return f"""<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="utf-8">
-<title>PixelOdyssey — Carte de densité</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-{leaflet_css}
-</style>
-<style>
-  html, body {{ margin:0; padding:0; height:100%; background:#111; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }}
-  #map {{ position:absolute; top:0; bottom:0; left:0; right:0; }}
-  #panel {{ position:absolute; top:12px; right:12px; z-index:1000; background:rgba(20,20,20,0.92); color:#eee;
-            padding:14px 16px; border-radius:8px; width:250px; box-shadow:0 2px 10px rgba(0,0,0,0.4); font-size:13px; }}
-  #panel h1 {{ font-size:14px; margin:0 0 10px; color:#fff; }}
-  #panel .row {{ margin-bottom:10px; }}
-  #panel label {{ display:block; margin-bottom:4px; color:#bbb; }}
-  .modebtn {{ flex:1; padding:6px 8px; border:1px solid #444; background:#2a2a2a; color:#eee; border-radius:4px;
-              cursor:pointer; font-size:12px; }}
-  .modebtn.active {{ background:#3a7dff; border-color:#3a7dff; color:#fff; }}
-  #modebtns {{ display:flex; gap:6px; }}
-  input[type=range] {{ width:100%; }}
-  #legend {{ margin-top:10px; padding-top:10px; border-top:1px solid #333; }}
-  #legend .swatch {{ display:inline-block; width:11px; height:11px; border-radius:2px; margin-right:6px; vertical-align:middle; }}
-  #legend div {{ margin-bottom:4px; }}
-  #meta {{ margin-top:10px; padding-top:10px; border-top:1px solid #333; color:#999; font-size:11px; line-height:1.5; }}
-  .leaflet-popup-content {{ font-size:12px; }}
-</style>
-</head>
-<body>
-<div id="map"></div>
-<div id="panel">
-  <h1>PixelOdyssey — Densité de déchets</h1>
-  <div class="row">
-    <label>Affichage</label>
-    <div id="modebtns">
-      <button class="modebtn active" id="btnPoints">Détections</button>
-      <button class="modebtn" id="btnHeat">Densité</button>
-    </div>
-  </div>
-  <div class="row">
-    <label>Opacité orthomosaïque : <span id="opacityVal">85%</span></label>
-    <input type="range" id="opacitySlider" min="0" max="100" value="85">
-  </div>
-  <div id="legend"></div>
-  <div id="meta">
-    Source : {source_name}<br>
-    Modèle : {model_name}<br>
-    {len(detections)} détection(s) après fusion des recouvrements de tuiles.
-  </div>
-</div>
-
-<script>
-{leaflet_js}
-</script>
-<script>
-{leaflet_heat_js}
-</script>
-<script>
-const DETECTIONS = {detections_json};
-const SW = [{sw[1]}, {sw[0]}];
-const NE = [{ne[1]}, {ne[0]}];
-const BOUNDS = L.latLngBounds(SW, NE);
-
-const map = L.map('map', {{ zoomControl: true, maxZoom: {tile_max_zoom} }}).fitBounds(BOUNDS, {{ padding: [40, 40] }});
-
-const satellite = L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',
-  {{ attribution: 'Fond satellite : Esri, Maxar, Earthstar Geographics', maxZoom: {tile_max_zoom}, maxNativeZoom: 19 }}
-).addTo(map);
-
-// Pyramide de tuiles locales (voir generate_tile_pyramid) - chemin relatif à
-// ce fichier HTML, donc "tiles/" doit rester dans le même dossier que lui.
-// minNativeZoom/maxNativeZoom : hors de cette plage, Leaflet agrandit la
-// tuile la plus proche au lieu de laisser un trou (aucune tuile générée).
-const ortho = L.tileLayer('tiles/{{z}}/{{x}}/{{y}}.png', {{
-  opacity: 0.85,
-  minZoom: 0,
-  maxZoom: {tile_max_zoom},
-  minNativeZoom: {tile_min_zoom},
-  maxNativeZoom: {tile_max_zoom},
-  bounds: BOUNDS,
-  noWrap: true,
-  tms: false,
-}}).addTo(map);
-
-// Rectangle discret montrant l'emprise exacte de l'orthomosaïque, même si
-// l'opacité est baissée à 0 - repère utile pour situer la zone étudiée.
-L.rectangle(BOUNDS, {{ color: '#3a7dff', weight: 1.5, fill: false, dashArray: '4,4' }}).addTo(map);
-
-const CLASS_COLORS = {{}};
-const PALETTE = ['#ff5252', '#ffb300', '#3a7dff', '#26c281', '#c77dff', '#ff8a5c', '#5cd6ff', '#ff5cbb'];
-let colorIdx = 0;
-function colorForClass(name) {{
-  if (!(name in CLASS_COLORS)) {{
-    CLASS_COLORS[name] = PALETTE[colorIdx % PALETTE.length];
-    colorIdx++;
-  }}
-  return CLASS_COLORS[name];
-}}
-
-const pointsLayer = L.layerGroup();
-DETECTIONS.forEach(d => {{
-  const color = colorForClass(d.class_name);
-  // Chip natif (voir build_detection_crops côté Python) avec le contour du
-  // masque dessiné dessus - c'est ce qui permet de juger si le masque colle
-  // vraiment au déchet réel, sans avoir besoin de zoomer sur la carte.
-  const cropHtml = d.crop
-    ? `<img src="${{d.crop}}" style="display:block;margin-top:6px;max-width:260px;border-radius:4px;">`
-    : '';
-  const popupHtml = `<b>${{d.class_name}}</b><br>Confiance : ${{(d.confidence * 100).toFixed(0)}}%${{cropHtml}}`;
-
-  // Le VRAI contour du masque prédit (reprojeté en lon/lat) - c'est ce qui
-  // permet de zoomer sur un déchet et de juger si le masque colle à sa forme
-  // réelle sous l'orthomosaïque, plutôt qu'un simple point sans épaisseur.
-  if (d.polygon && d.polygon.length >= 3) {{
-    const mask = L.polygon(d.polygon, {{
-      color: color,
-      weight: 2,
-      fillColor: color,
-      fillOpacity: 0.35,
-    }});
-    mask.bindPopup(popupHtml);
-    pointsLayer.addLayer(mask);
-  }}
-
-  // Petit point centré en complément : à faible zoom, un masque de
-  // quelques cm devient un polygone de quelques pixels écran - quasi
-  // impossible à cliquer sans ce repère toujours visible.
-  const marker = L.circleMarker([d.lat, d.lon], {{
-    radius: 4,
-    color: '#111',
-    weight: 1,
-    fillColor: color,
-    fillOpacity: 0.9,
-  }});
-  marker.bindPopup(popupHtml);
-  pointsLayer.addLayer(marker);
-}});
-pointsLayer.addTo(map);
-
-const heatPoints = DETECTIONS.map(d => [d.lat, d.lon, 0.4 + d.confidence * 0.6]);
-const heatLayer = L.heatLayer(heatPoints, {{ radius: 28, blur: 22, maxZoom: 21 }});
-
-function renderLegend() {{
-  const el = document.getElementById('legend');
-  el.innerHTML = Object.entries(CLASS_COLORS).map(([name, color]) =>
-    `<div><span class="swatch" style="background:${{color}}"></span>${{name}}</div>`
-  ).join('');
-}}
-renderLegend();
-
-document.getElementById('btnPoints').addEventListener('click', () => {{
-  map.removeLayer(heatLayer);
-  pointsLayer.addTo(map);
-  document.getElementById('btnPoints').classList.add('active');
-  document.getElementById('btnHeat').classList.remove('active');
-  document.getElementById('legend').style.display = 'block';
-}});
-document.getElementById('btnHeat').addEventListener('click', () => {{
-  map.removeLayer(pointsLayer);
-  heatLayer.addTo(map);
-  document.getElementById('btnHeat').classList.add('active');
-  document.getElementById('btnPoints').classList.remove('active');
-  document.getElementById('legend').style.display = 'none';
-}});
-document.getElementById('opacitySlider').addEventListener('input', (e) => {{
-  const v = parseInt(e.target.value, 10);
-  ortho.setOpacity(v / 100);
-  document.getElementById('opacityVal').textContent = v + '%';
-}});
-</script>
-</body>
-</html>
-"""
-
-
 def run_geo_density_map(
     tif_path: str,
     model_path: str,
@@ -567,14 +400,28 @@ def run_geo_density_map(
     tile_conf_threshold: float = 0.25,
     nms_iou_threshold: float = 0.5,
     ortho_max_zoom_cap: int = 21,
-    output_dir: str = DENSITY_MAPS_DIR,
+    output_dir: "Optional[str]" = None,
     run_id: Optional[str] = None,
+    class_config_path: "Optional[str]" = None,
 ) -> Dict:
     """`output_path` explicite prend le pas s'il est fourni (utile pour un
     test ponctuel) ; sinon la sortie va dans
-    `7_density_maps/<run_id>/index.html` (run_id = horodatage par défaut),
-    même convention que `visualize_predictions.py` (6_prediction_viewer/<run_id>/)."""
-    class_taxonomy, target_names = load_class_config(DEFAULT_CLASS_CONFIG_PATH)
+    `<output_dir>/<run_id>/index.html` - `output_dir` par défaut
+    `DEFAULT_PREDICTION_DIR` (`4. Results/2_prediction/`, voir paths.py,
+    partagé avec le mode batch) ; `run_id` par défaut `ortho_<horodatage>`
+    (préfixe qui distingue ce mode dans le dossier commun, voir paths.py).
+
+    `class_config_path` (pour le dispatch unifié de `run_inference.py`) :
+    PAR DÉFAUT None -> `DEFAULT_CLASS_CONFIG_PATH`
+    (7-classes, comportement inchangé pour un appel direct de ce module en
+    diagnostic). Un modèle choisi via le registre `config/models_registry.yaml`
+    (voir `model_registry.py`) peut avoir été entraîné sous une AUTRE
+    taxonomie (ex: mono-classe, `taxonomy_config: config/data_config_mono_class.yaml`) -
+    sans ce paramètre, `assert_model_matches_taxonomy` ci-dessous lèverait à
+    tort une erreur de mismatch (le modèle serait comparé à la mauvaise
+    config), pour un modèle pourtant valide."""
+    class_config_path = class_config_path or DEFAULT_CLASS_CONFIG_PATH
+    class_taxonomy, target_names = load_class_config(class_config_path)
 
     print(f"--- 🗺️  CARTE DE DENSITÉ GÉORÉFÉRENCÉE ---")
     print(f"    Orthomosaïque : {tif_path}")
@@ -594,9 +441,9 @@ def run_geo_density_map(
 
     # Centroïde (pour le mode densité, qui a besoin d'un point unique par
     # détection) + contour COMPLET du masque de segmentation (pour dessiner
-    # le vrai polygone en mode "Détections", voir _build_html). Un seul appel
-    # groupé à pixels_to_lonlat pour l'ensemble plutôt qu'un par détection -
-    # évite des centaines de petits appels à rasterio.warp.transform.
+    # le vrai polygone en mode "Détections"). Un seul appel groupé à
+    # pixels_to_lonlat pour l'ensemble plutôt qu'un par détection - évite des
+    # centaines de petits appels à rasterio.warp.transform.
     centroids_px = [(d.geom.centroid.x, d.geom.centroid.y) for d in detections]
     vertex_counts = [len(d.geom.exterior.coords) for d in detections]
     all_polygon_px = [pt for d in detections for pt in d.geom.exterior.coords]
@@ -604,43 +451,114 @@ def run_geo_density_map(
     centroid_lonlat = all_lonlat[: len(detections)]
     polygon_lonlat_flat = all_lonlat[len(detections):]
 
+    # Surface au sol (m²) et poids estimé (voir weight_estimation.py,
+    # PROVISOIRE) - `pixel_area_m2` est None si le CRS n'est pas projeté en
+    # mètres (voir `_pixel_area_m2`), auquel cas aucune surface/poids n'est
+    # calculée plutôt qu'un chiffre faux.
+    pixel_area_m2 = _pixel_area_m2(transform, crs)
+    if pixel_area_m2 is None:
+        print("⚠️  [geo_density_map] CRS géographique (pas de mètres natifs) - surface/poids non "
+              "calculés pour ce run (voir _pixel_area_m2).")
+
     print(f"  → Découpe de {len(detections)} chip(s) natif(s) autour de chaque masque "
           f"(voir build_detection_crops)...")
     crops = build_detection_crops(tif_path, detections)
 
     detection_records = []
+    # Features au format GeoJSON (voir plus bas, export detections.geojson) -
+    # tenues SÉPARÉES de detection_records à dessein : detection_records est
+    # sérialisé tel quel dans le HTML (voir render_map_page) et n'a besoin
+    # que des coordonnées lon/lat déjà calculées ; y ajouter le polygone
+    # PIXEL pleine résolution (nécessaire pour reconstruire un lot CVAT plus
+    # tard, voir export_predictions_to_cvat.py) gonflerait inutilement chaque
+    # page HTML générée.
+    geojson_features = []
     idx = 0
     for det, (lon, lat), n_verts, crop in zip(detections, centroid_lonlat, vertex_counts, crops):
         verts = polygon_lonlat_flat[idx: idx + n_verts]
         idx += n_verts
+        class_name = target_names.get(det.class_id, f"classe_{det.class_id}")
+        area_m2 = det.geom.area * pixel_area_m2 if pixel_area_m2 is not None else None
+        weight_kg = estimate_weight_kg(class_name, area_m2)
+        confidence = round(float(det.confidence or 0.0), 4)
+        area_m2_rounded = round(area_m2, 4) if area_m2 is not None else None
+        weight_kg_rounded = round(weight_kg, 4) if weight_kg is not None else None
         detection_records.append({
             "lon": lon,
             "lat": lat,
-            "confidence": round(float(det.confidence or 0.0), 4),
+            "confidence": confidence,
             "class_id": det.class_id,
-            "class_name": target_names.get(det.class_id, f"classe_{det.class_id}"),
+            "class_name": class_name,
             # [lat, lon] par sommet - convention attendue par L.polygon côté JS.
             "polygon": [[la, lo] for lo, la in verts],
             "crop": crop,
+            "area_m2": area_m2_rounded,
+            "weight_kg": weight_kg_rounded,
         })
+        geojson_features.append({
+            "type": "Feature",
+            "geometry": mapping(Polygon([(lo, la) for lo, la in verts])),
+            "properties": {
+                "class_id": det.class_id,
+                "class_name": class_name,
+                "confidence": confidence,
+                "area_m2": area_m2_rounded,
+                "weight_kg": weight_kg_rounded,
+                "centroid_lon": lon,
+                "centroid_lat": lat,
+                # Polygone PIXEL dans le repère de l'orthomosaïque COMPLÈTE
+                # (pas encore recadré à un morceau de grille) - voir
+                # ortho_source ci-dessous pour les dimensions/chemin
+                # nécessaires à sa réutilisation (export_predictions_to_cvat.py).
+                "pixel_polygon": [[round(x, 2), round(y, 2)] for x, y in det.geom.exterior.coords],
+            },
+        })
+
+    stats = compute_aggregate_stats(detection_records)
 
     if output_path is None:
         if run_id is None:
             from datetime import datetime
 
-            run_id = datetime.now().strftime("density_%Y%m%d_%H%M%S")
-        out_p = Path(output_dir) / run_id / "index.html"
+            run_id = datetime.now().strftime("ortho_%Y%m%d_%H%M%S")
+        out_p = Path(output_dir or DEFAULT_PREDICTION_DIR) / run_id / "index.html"
     else:
         out_p = Path(output_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
+
+    # Export detections.geojson - même convention que run_application.py
+    # (mode batch), absent jusqu'ici du mode orthomosaïque (qui ne produisait
+    # que la carte HTML). `ortho_source` (membre GeoJSON additionnel, en
+    # dehors de `type`/`features` - autorisé par la spec GeoJSON) persiste le
+    # nécessaire pour recadrer les polygones PIXEL ci-dessus en morceaux
+    # d'une grille CVAT plus tard (voir export_predictions_to_cvat.py), sans
+    # avoir à rouvrir le modèle ni relancer l'inférence.
+    geojson = {
+        "type": "FeatureCollection",
+        "ortho_source": {"tif_path": str(tif_path), "width_px": img_w, "height_px": img_h},
+        "features": geojson_features,
+    }
+    geojson_path = out_p.parent / "detections.geojson"
+    with open(geojson_path, "w", encoding="utf-8") as f:
+        json.dump(geojson, f, ensure_ascii=False, indent=2)
+    print(f"  → {len(geojson_features)} détection(s) exportée(s) : {geojson_path}")
 
     print("  → Génération de la pyramide de tuiles de l'orthomosaïque (voir generate_tile_pyramid)...")
     tiles_dir = out_p.parent / "tiles"
     pyramid = generate_tile_pyramid(tif_path, tiles_dir, max_zoom_cap=ortho_max_zoom_cap)
 
-    html = _build_html(
-        pyramid["min_zoom"], pyramid["max_zoom"], pyramid["sw"], pyramid["ne"], detection_records,
-        source_name=Path(tif_path).name, model_name=Path(model_path).name,
+    meta_extra_html = (
+        f"Modèle : {Path(model_path).name}<br>"
+        f"{len(detection_records)} détection(s) après fusion des recouvrements de tuiles."
+    )
+    html = render_map_page(
+        detection_records, stats,
+        bounds=(pyramid["sw"], pyramid["ne"]),
+        source_name=Path(tif_path).name,
+        mode_label=MODE_LABEL,
+        map_max_zoom=pyramid["max_zoom"],
+        ortho_layer={"tiles_rel_path": "tiles", "min_zoom": pyramid["min_zoom"], "max_zoom": pyramid["max_zoom"]},
+        meta_extra_html=meta_extra_html,
     )
     with open(out_p, "w", encoding="utf-8") as f:
         f.write(html)
@@ -662,8 +580,10 @@ if __name__ == "__main__":
     parser.add_argument("--model", required=True, help="Chemin vers le modèle entraîné (best.pt).")
     parser.add_argument("--output", default=None,
                          help="Fichier HTML de sortie. Optionnel : si omis, écrit dans "
-                              "7_density_maps/<horodatage>/index.html (même convention que "
-                              "6_prediction_viewer/).")
+                              "4. Results/2_prediction/ortho_<horodatage>/index.html (voir paths.py).")
+    parser.add_argument("--output-dir", default=None,
+                         help="Dossier parent des runs (défaut : 4. Results/2_prediction/, voir paths.py) "
+                              "- ignoré si --output est fourni.")
     parser.add_argument("--tile-size", type=int, default=640)
     parser.add_argument("--overlap", type=int, default=256)
     parser.add_argument("--tile-conf-threshold", type=float, default=0.25)
@@ -673,14 +593,21 @@ if __name__ == "__main__":
                               "fond de carte (vue d'ensemble, PAS l'inspection fine d'un masque - "
                               "voir build_detection_crops pour ça). Défaut 21 : vue nette suffisante "
                               "pour naviguer sans faire exploser la taille du dossier de sortie.")
+    parser.add_argument("--class-config", default=None,
+                         help="Référentiel de classes (config/data_config*.yaml) utilisé À "
+                              "L'ENTRAÎNEMENT du modèle passé à --model. Optionnel : défaut "
+                              "config/data_config.yaml (7-classes) - à préciser si le modèle est "
+                              "mono-classe ou une autre variante (voir model_registry.py).")
     args = parser.parse_args()
     run_geo_density_map(
         tif_path=args.tif,
         model_path=args.model,
         output_path=args.output,
+        output_dir=args.output_dir,
         tile_size=args.tile_size,
         overlap=args.overlap,
         tile_conf_threshold=args.tile_conf_threshold,
         nms_iou_threshold=args.nms_iou_threshold,
         ortho_max_zoom_cap=args.ortho_max_zoom_cap,
+        class_config_path=args.class_config,
     )

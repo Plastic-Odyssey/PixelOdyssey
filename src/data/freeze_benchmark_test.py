@@ -7,7 +7,7 @@ Prend une photo du split test ACTUEL (lu dans `2_split_dataset/.parent_manifest.
 donc `split_dataset.py` doit déjà avoir tourné au moins une fois) et l'écrit dans
 `config/frozen_test_parents.json`. À partir de là, `split_dataset.py` épingle ces
 parent_id en test de façon PERMANENTE, quel que soit le lot ou les données ajoutées
-plus tard - voir sa docstring et le journal de décisions du 26/08/2026.
+plus tard - voir sa docstring.
 
 Effet définitif à comprendre avant de lancer : une fois gelé, plus aucune image du
 lot dont provient un parent_id figé ne peut "reprendre sa place" en test - le reste
@@ -34,7 +34,7 @@ Deux modes de gel sont disponibles :
    raw_dataset.collect_parent_images (nom de lot + chemin relatif, séparateurs et
    espaces remplacés par "_"). Utile quand le split aléatoire par lot laisse des
    petits lots sans aucune image de test, ou tire un transect atypique en densité
-   d'objets - voir le journal de décisions (27/08/2026) pour le raisonnement complet.
+   d'objets.
 
 Exemple :
     python -m src.data.freeze_benchmark_test
@@ -172,8 +172,8 @@ def freeze_manual_test(
         raise RuntimeError(f"Aucune image parente trouvée sous {raw_dir}.")
     all_by_id = {p["parent_id"]: p for p in all_parents}
     # Repli insensible à la casse : le dataset brut a des sous-dossiers "train"/"Train"
-    # incohérents SELON LE LOT (constaté le 27/08/2026 - SL/A LEG utilisent "train" en
-    # minuscule, SB "Train" en majuscule) - un chemin tapé à la main dans
+    # incohérents SELON LE LOT (SL/A LEG utilisent "train" en minuscule, SB "Train" en
+    # majuscule) - un chemin tapé à la main dans
     # manual_test_selection.json avec la mauvaise casse ne doit pas silencieusement
     # échouer à résoudre tout un lot. En cas de collision entre deux parent_id qui ne
     # diffèrent QUE par la casse (jamais observé, mais possible en théorie), le premier

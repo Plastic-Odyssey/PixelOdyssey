@@ -87,7 +87,32 @@ def nms_merge(predictions: List[LabeledPolygon], iou_threshold: float = 0.5) -> 
     identique, que l'image source soit chargée entièrement en mémoire
     (predict_parent_image ci-dessous) ou lue fenêtre par fenêtre via rasterio
     pour une orthomosaïque trop grande pour tenir en RAM.
+
+    INDEXATION SPATIALE (STRtree) - pas une simple boucle O(n²) : comparer
+    TOUTES les paires de détections d'une même classe entre elles ne passe
+    pas à l'échelle d'une orthomosaïque complète. Avec un modèle mono-classe,
+    TOUTES les détections tombent dans le même groupe `by_class` - sur une
+    orthomosaïque réelle (des milliers de fenêtres), ça peut représenter
+    10 000+ détections brutes dans un seul groupe, soit N²/2 (des centaines de
+    millions) d'appels à `polygon_iou` si on les compare toutes entre elles,
+    alors qu'en réalité seules les détections GÉOGRAPHIQUEMENT proches (zones
+    de recouvrement entre fenêtres adjacentes) peuvent être des doublons -
+    l'écrasante majorité des paires sont à des endroits complètement
+    différents de l'image et n'ont aucune chance de se chevaucher. D'où
+    l'utilisation d'un index spatial (`shapely.strtree.STRtree`) : pour
+    chaque détection gardée, on ne compare qu'aux détections dont la
+    géométrie intersecte réellement la sienne (candidats retournés par
+    l'index), pas à tout le groupe. Complexité proche de O(n log n) au lieu
+    de O(n²) pour des détections dispersées dans l'espace (le cas normal en
+    orthomosaïque) - voir /home/claude/nms_fix/bench.py pour la mesure :
+    sur données groupées (clusters de doublons volontaires), résultat
+    IDENTIQUE à l'ancienne version en boucle mais ~64x plus rapide dès
+    N=1000 ; sur un volume réaliste de 18 070 détections (cas réel rencontré
+    par Jame sur une orthomosaïque, modèle mono-classe), l'ancienne version
+    aurait pris environ 1h (extrapolé), la nouvelle prend <1s.
     """
+    from shapely.strtree import STRtree
+
     from src.review.matching import polygon_iou
 
     by_class: dict = {}
@@ -97,13 +122,19 @@ def nms_merge(predictions: List[LabeledPolygon], iou_threshold: float = 0.5) -> 
     kept: List[LabeledPolygon] = []
     for class_id, items in by_class.items():
         items = sorted(items, key=lambda p: p.confidence or 0.0, reverse=True)
+        geoms = [p.geom for p in items]
+        tree = STRtree(geoms)
         taken = [False] * len(items)
         for i, p in enumerate(items):
             if taken[i]:
                 continue
             kept.append(p)
-            for j in range(i + 1, len(items)):
-                if taken[j]:
+            # Ne compare qu'aux détections dont la géométrie intersecte
+            # réellement celle de `p` (candidats retournés par l'index),
+            # jamais à tout le groupe `items`.
+            for j in tree.query(p.geom, predicate="intersects"):
+                j = int(j)
+                if j <= i or taken[j]:
                     continue
                 if polygon_iou(p.geom, items[j].geom) >= iou_threshold:
                     taken[j] = True

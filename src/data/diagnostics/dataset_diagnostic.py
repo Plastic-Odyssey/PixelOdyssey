@@ -34,18 +34,17 @@ supposée) - comparable aux mesures manuelles de
 `guide_mesure_surface_bache_qgis.md`, mais à lire comme une estimation
 (empreinte 2D vue du dessus, pas un volume).
 
-Aire en pixels + estimation cm² à GSD FIXE (demande du 02/09/2026) : en plus
-de `aire_m2_estimee` (GSD réelle, seulement dispo si géoréférencé), chaque
-item porte aussi `aire_px` (aire brute du masque en pixels², toujours
-disponible) et `aire_cm2_estimee_gsd_fixe` (aire_px × gsd_fixe_cm_px², avec
+Aire en pixels + estimation cm² à GSD FIXE : en plus de `aire_m2_estimee`
+(GSD réelle, seulement dispo si géoréférencé), chaque item porte aussi
+`aire_px` (aire brute du masque en pixels², toujours disponible) et
+`aire_cm2_estimee_gsd_fixe` (aire_px × gsd_fixe_cm_px², avec
 `--gsd-fixe-cm-px` par défaut 0.6 cm/px) - calculée pour TOUS les items, y
 compris les lots non géoréférencés (SB...), puisqu'elle ne dépend d'aucun
 CRS. Point de vigilance à garder en tête : c'est une HYPOTHÈSE UNIQUE
 appliquée à tout le dataset, alors que la GSD réelle peut varier d'un lot à
-l'autre (altitude de vol, appareil - la mesure du 24/08/2026 donnait ≈0,5
-cm/px sur une orthomosaïque SL réelle, contre 0,6 cm/px demandé ici) : utile
-pour comparer vite tous les items sur une base commune, mais `aire_m2_estimee`
-(GSD mesurée) reste la référence à privilégier pour les lots qui l'ont.
+l'autre (altitude de vol, appareil) : utile pour comparer vite tous les
+items sur une base commune, mais `aire_m2_estimee` (GSD mesurée) reste la
+référence à privilégier pour les lots qui l'ont.
 
 Split train/val/test : ajouté par item SI `2_split_dataset/.parent_manifest.json`
 existe déjà (généré par split_dataset.py / data_pipeline.py) - sinon la
@@ -59,9 +58,9 @@ Sortie : un classeur .xlsx avec les feuilles :
   - Par super-classe    : agrégats/moyennes sur la taxonomie cible (7 classes)
   - Par collecte        : agrégats/moyennes par lot (dossier de 1er niveau)
   - Par classe brute     : granularité fine, pour recoupement avec dataset_audit.py
-  - Par split            : totaux par split train/val/test (ajouté le 03/09/2026,
-    demande de vérification d'équilibre de classe sur le dataset multi-classe -
-    voir aussi "Répartition classes x split" ci-dessous, la feuille qui répond
+  - Par split            : totaux par split train/val/test (vérification
+    d'équilibre de classe sur le dataset multi-classe - voir aussi
+    "Répartition classes x split" ci-dessous, la feuille qui répond
     réellement à cette question)
   - Répartition classes x split : LA feuille pour repérer un déséquilibre de
     classe entre train/val/test - une ligne par super-classe, avec pour
@@ -80,10 +79,10 @@ EXCLUDE (classes explicitement exclues de l'entraînement, ex. "Morceaux de
 bois"/"Verre") : présentes dans "Items" (dump exhaustif, colonne `est_exclue`)
 et comptées dans "Résumé", mais retirées de TOUTES les feuilles agrégées par
 super-classe ("Par super-classe", "Par collecte", "Par split", "Répartition
-classes x split", demande du 03/09/2026) - une classe jamais vue à
-l'entraînement n'a pas sa place dans un diagnostic de composition/équilibre
-de ce qui EST entraîné, et sa présence y faussait les pourcentages (dénominateur
-gonflé) tout en risquant de déclencher à tort l'alerte "absente de val/test".
+classes x split") - une classe jamais vue à l'entraînement n'a pas sa place
+dans un diagnostic de composition/équilibre de ce qui EST entraîné, et sa
+présence y fausserait les pourcentages (dénominateur gonflé) tout en
+risquant de déclencher à tort l'alerte "absente de val/test".
 NON RÉSOLU (classe brute non reconnue par la taxonomie - anomalie, pas une
 exclusion voulue) reste inclus partout, volontairement : à corriger, pas à
 masquer. "Par classe brute" reste lui aussi sur le jeu complet (recoupement
@@ -212,9 +211,9 @@ def _geo_info_for_image(img_path: Path, skip_geo: bool = False) -> Dict:
 
 def _centroids_to_lonlat(centroids_px: List[Tuple[float, float]], transform, crs) -> List[Tuple[float, float]]:
     """Même logique que geo_density_map.pixels_to_lonlat, réimportée directement
-    depuis src.review.geo_density_map pour ne jamais dupliquer cette conversion -
+    depuis src.application.geo_density_map pour ne jamais dupliquer cette conversion -
     voir l'import plus bas dans build_items()."""
-    from src.review.geo_density_map import pixels_to_lonlat
+    from src.application.geo_density_map import pixels_to_lonlat
 
     return pixels_to_lonlat(centroids_px, transform, crs)
 
@@ -559,16 +558,16 @@ def _write_per_split_sheet(writer, df_items: pd.DataFrame) -> None:
 
 def _write_class_by_split_sheet(writer, df_items: pd.DataFrame) -> List[str]:
     """LA feuille qui répond à "y a-t-il un déséquilibre de classe entre
-    train/val/test ?" (demande du 03/09/2026, dataset multi-classe - voir
-    docstring du module). Une ligne par super-classe RÉELLEMENT ENTRAÎNÉE :
-    `df_items` reçu ici est déjà filtré des instances EXCLUDE par l'appelant
-    (voir run_diagnostic) - une classe jamais vue à l'entraînement n'a rien à
-    faire dans un diagnostic de déséquilibre ENTRE splits d'entraînement
-    (demande du 03/09/2026, correction du choix initial ci-dessous). Sans ce
-    filtre, `pct_du_split`/`ecart_max_pct_pts` étaient faussés par le poids
-    d'EXCLUDE dans chaque split, ET EXCLUDE apparaissait comme une classe à
-    part entière risquant de déclencher l'alerte "absente de val/test" alors
-    qu'elle n'a par construction jamais vocation à y être évaluée.
+    train/val/test ?" (dataset multi-classe - voir docstring du module).
+    Une ligne par super-classe RÉELLEMENT ENTRAÎNÉE : `df_items` reçu ici
+    est déjà filtré des instances EXCLUDE par l'appelant (voir
+    run_diagnostic) - une classe jamais vue à l'entraînement n'a rien à
+    faire dans un diagnostic de déséquilibre ENTRE splits d'entraînement.
+    Sans ce filtre, `pct_du_split`/`ecart_max_pct_pts` seraient faussés par
+    le poids d'EXCLUDE dans chaque split, ET EXCLUDE apparaîtrait comme une
+    classe à part entière risquant de déclencher l'alerte "absente de
+    val/test" alors qu'elle n'a par construction jamais vocation à y être
+    évaluée.
     NON RÉSOLU reste en revanche inclus (pas concerné par cette demande) :
     contrairement à EXCLUDE (exclusion volontaire et connue), NON RÉSOLU
     signale une vraie anomalie de données à corriger, pas à masquer.
@@ -650,8 +649,7 @@ def run_diagnostic(
     # Feuilles agrégées par SUPER-CLASSE (Par super-classe, Par collecte, Par
     # split, Répartition classes x split) : une instance EXCLUDE n'est par
     # construction jamais vue à l'entraînement, elle n'a donc pas sa place
-    # dans un diagnostic de composition/équilibre de ce qui EST entraîné -
-    # demande du 03/09/2026, qui remplace le choix d'inclusion précédent.
+    # dans un diagnostic de composition/équilibre de ce qui EST entraîné.
     # "Items" (dump exhaustif) et "Par classe brute" (recoupement avec
     # dataset_audit.py, qui n'a lui-même aucune notion d'exclusion) restent
     # sur df_items complet - voir leurs docstrings respectifs.

@@ -47,15 +47,16 @@ Fonctionnement :
        validées étant recadrées à la géométrie de chaque morceau (même
        logique de recadrage que le slicer d'entraînement, src/data/slicer.py).
        Par défaut (omis) : calculé AUTOMATIQUEMENT pour que chaque morceau
-       reste sous CVAT_MAX_PIXELS (150 000 000 px - constaté par
-       l'utilisateur, au-delà CVAT refuse l'import), 1 seul morceau si
-       l'image tient déjà dedans. Si précisé explicitement et insuffisant
-       pour respecter ce plafond, l'outil refuse plutôt que d'écrire un lot
-       inutilisable (voir `_resolve_n_pieces`) - les deux contraintes ("le
-       plus carré possible" et "sous le plafond CVAT") ne s'opposent jamais :
-       la surface d'un morceau ne dépend que de leur nombre total, pas de la
-       forme de grille choisie pour ce nombre (voir
-       tiling_geometry.min_pieces_for_pixel_cap).
+       reste sous CVAT_MAX_PIXELS (50 000 000 px - voir sa définition dans
+       split_for_cvat.py, seule source de vérité pour cette limite,
+       importée ici plutôt que dupliquée)
+       (1 seul morceau si l'image tient déjà dedans). Si précisé
+       explicitement et insuffisant pour respecter ce plafond, l'outil refuse
+       plutôt que d'écrire un lot inutilisable (voir `_resolve_n_pieces`) -
+       les deux contraintes ("le plus carré possible" et "sous le plafond
+       CVAT") ne s'opposent jamais : la surface d'un morceau ne dépend que de
+       leur nombre total, pas de la forme de grille choisie pour ce nombre
+       (voir tiling_geometry.min_pieces_for_pixel_cap).
 
 RESULTS_DIR (E:\\PixelOdyssey\\4. Results\\1_assisted_annotation) plutôt que
 1_annotated_dataset directement : ce lot est une PROPOSITION issue du
@@ -105,6 +106,7 @@ from src.data.image_io import load_image_bgr
 from src.data.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
 from src.review.label_review import RUNS_DIR, _discover_available_models, _prompt_model_choice
 from src.review.matching import LabeledPolygon
+from src.review.split_for_cvat import CVAT_MAX_PIXELS
 from src.review.tiled_inference import make_ultralytics_predict_fn, predict_parent_image
 
 MARGIN_PX = 80          # marge autour du masque dans le chip de revue
@@ -123,18 +125,19 @@ RESULTS_DIR = r"E:\PixelOdyssey\4. Results\1_assisted_annotation"
 # d'un morceau voisin avec un confetti sans valeur.
 GRID_MIN_AREA_RATIO = 0.05
 
-# Limite d'import CVAT (constatée par l'utilisateur, 27/08/2026) : une image
-# de plus de ~50 millions de pixels est refusée à l'import. Sert de plafond
-# par défaut pour la résolution automatique de --n-pieces (voir
+# CVAT_MAX_PIXELS (limite d'import CVAT) est importé depuis split_for_cvat.py
+# plutôt que redéfini ici, pour n'avoir qu'une seule source de vérité pour
+# cette valeur - voir sa définition et son raisonnement là-bas. Sert de
+# plafond par défaut pour la résolution automatique de --n-pieces (voir
 # _resolve_n_pieces) - une orthomosaïque plus grande que ça DOIT être
 # fragmentée avant d'être proposée à CVAT, ce n'est plus une option.
-CVAT_MAX_PIXELS = 50_000_000
 
 # En dessous de ce nombre de candidates, une classe est signalée comme
-# "échantillon trop faible" dans le résumé - repère déjà discuté avec
-# l'utilisateur (2026-08-27) : sous ~10 instances, une statistique par classe
-# (ici juste un compte, pas encore une métrique de qualité) est trop bruitée
-# pour juger quoi que ce soit dessus, seulement pour repérer une présence.
+# "échantillon trop faible" dans le résumé : sous ce seuil, une statistique
+# par classe (ici juste un compte, pas encore une métrique de qualité) est
+# trop bruitée pour juger quoi que ce soit dessus, seulement pour repérer une
+# présence. Question ouverte : la valeur (10) est un repère raisonnable mais
+# arbitraire, pas dérivé d'une analyse formelle de puissance statistique.
 LOW_SAMPLE_WARN_THRESHOLD = 10
 
 
@@ -185,10 +188,10 @@ def _clip_one_to_window(
     d'entraînement, ne rattrape pas ailleurs l'objet coupé - le fragment
     gardé est la seule trace de cet objet dans ce morceau).
 
-    Factorisé à l'unité (plutôt qu'en lot comme avant) pour être appelable
-    dès qu'UNE annotation est validée (`_append_validated_to_pieces`, revue
-    manuelle) et pas seulement en bloc à la fin (`_clip_validated_to_window`,
-    conservé pour --auto-write qui construit sa liste en un coup)."""
+    Factorisé à l'unité pour être appelable dès qu'UNE annotation est validée
+    (`_append_validated_to_pieces`, revue manuelle) et pas seulement en bloc
+    à la fin (`_clip_validated_to_window`, conservé pour --auto-write qui
+    construit sa liste en un coup)."""
     window = box(x0, y0, x1, y1)
     piece_w, piece_h = x1 - x0, y1 - y0
     lines: List[str] = []
@@ -347,10 +350,9 @@ class Piece:
     label VIDE existent déjà sur disque dès la construction (voir
     `_init_lot`) ; `label_path` est ensuite complété au fur et à mesure par
     `_append_validated_to_pieces`, une ligne à la fois, jamais en un seul
-    bloc final (voir le raisonnement dans la docstring du module et le
-    journal du 31/08 : c'est ce report de toute l'écriture à la toute fin
-    qui a fait perdre 320 annotations validées lors d'un plantage en cours
-    d'écriture)."""
+    bloc final (voir le raisonnement dans la docstring du module) : une
+    interruption en cours de route ne perd alors que la revue restante,
+    jamais les annotations déjà validées."""
 
     __slots__ = ("label_path", "x0", "y0", "x1", "y1")
 
@@ -465,9 +467,9 @@ def _append_validated_to_pieces(v: Dict, img_w: int, img_h: int, pieces: List[Pi
 
     Cas `n_pieces == 1` (un seul Piece, fenêtre = l'image entière) : la
     ligne pleine image est déjà dans le bon référentiel, écrite telle
-    quelle (comportement identique à avant ce correctif, aucun recadrage
-    nécessaire). Sinon, recadre sur chaque morceau via `_clip_one_to_window`
-    et n'ajoute une ligne qu'aux morceaux réellement concernés.
+    quelle, aucun recadrage nécessaire. Sinon, recadre sur chaque morceau via
+    `_clip_one_to_window` et n'ajoute une ligne qu'aux morceaux réellement
+    concernés.
 
     Entrée : l'annotation validée ({class_id, coords_norm}), dimensions de
     l'image, morceaux du lot (déjà initialisés par `_init_lot`).
@@ -496,7 +498,7 @@ class _ReviewState:
     `decide()` écrit immédiatement chaque validation (voir
     `_append_validated_to_pieces`) ; `finish()` ne fait donc plus AUCUNE
     écriture (juste marquer la revue comme terminée pour l'interface) - voir
-    le raisonnement dans la docstring du module (journal du 31/08)."""
+    le raisonnement dans la docstring du module."""
 
     def __init__(self, img, candidates: List[LabeledPolygon], target_names: Dict[int, str],
                  pieces: List[Piece], img_w: int, img_h: int):
@@ -947,8 +949,8 @@ def run_assisted_annotate(
     # "Valider" ajoutera ensuite immédiatement sa ligne au fichier de label
     # concerné (_ReviewState.decide -> _append_validated_to_pieces) : plus
     # aucune écriture lourde n'est différée jusqu'à "Enregistrer et
-    # terminer" (voir journal du 31/08 - c'est ce report qui a fait perdre
-    # 320 annotations validées lors d'un plantage en cours d'écriture).
+    # terminer", pour qu'une interruption en cours de revue ne perde jamais
+    # les annotations déjà validées.
     pieces = _init_lot(lot_dir, image_path, img, img_w, img_h, target_names, n_pieces=n_pieces)
     state = _ReviewState(img, candidates, target_names, pieces, img_w, img_h)
     server = ThreadingHTTPServer((host, port), _make_handler(state))
@@ -991,9 +993,9 @@ def _class_group_stats(
     """Statistiques descriptives PAR CLASSE sur un groupe de détections
     (prédictions brutes, ou candidates au-dessus du seuil de confiance) :
     effectif, distribution de confiance (min/médiane/moyenne/max), et aire
-    relative médiane du masque (aire du polygone / aire de l'image parente -
-    même logique que l'aire relative déjà utilisée pour diagnostiquer
-    `Bouchon`/`Bouee` dans l'audit du dataset, voir journal du 26/08).
+    relative médiane du masque (aire du polygone / aire de l'image parente) -
+    utile pour repérer une classe dont les masques prédits sont anormalement
+    petits ou grands par rapport à ce qu'on attend (ex: `Bouchon`/`Bouee`).
 
     Entrée : liste de détections, noms de classes cibles, aire de l'image
     parente en pixels² (None si indisponible - l'aire relative est alors
@@ -1087,7 +1089,7 @@ def _print_prediction_stats(stats: Dict, conf_threshold: float) -> None:
             f"\n  ⚠️  Classe(s) à échantillon faible (< {LOW_SAMPLE_WARN_THRESHOLD} candidates) sur "
             f"cette image : {detail}. Rappel : en dessous de ce seuil, le nombre repéré ne permet "
             f"de juger que la PRÉSENCE de la classe sur cette image, pas la fiabilité du modèle "
-            f"dessus - voir échange du 27/08 sur la significativité statistique."
+            f"dessus."
         )
 
 

@@ -9,22 +9,23 @@ split commun (val/test) : les métriques globales/macro puis un tableau par
 classe, pour chaque run comparé côte à côte. Signale explicitement si les
 hyperparamètres ou la donnée d'entraînement (fingerprint de
 4_sliced_dataset) diffèrent entre les runs comparés : une comparaison de
-performance n'a de sens que si UNE SEULE chose a changé entre deux runs -
-voir le journal de décisions (épisode copy_paste du 24-25/08/2026, où 4
-changements groupés dans un même run ont rendu la cause impossible à isoler).
+performance n'a de sens que si UNE SEULE chose a changé entre deux runs
+(plusieurs changements groupés dans un même run rendent la cause impossible
+à isoler).
 
-F1 (macro et global/pondéré, en plus de P et R déjà présents) ajouté le 28/08/2026 -
-répond au fait qu'une comparaison P/R qui bouge en sens opposé (précision qui monte,
-rappel qui baisse, ou l'inverse - le motif observé sur plusieurs runs d'affilée cette
-semaine) est difficile à trancher visuellement classe par classe. F1 macro = MOYENNE
-DES F1 PAR CLASSE (pas F1 recalculé depuis précision/rappel macro - ce sont deux
-quantités différentes, voir `_macro_f1` dans training_report.py) ; F1 global = moyenne
-harmonique de précision/rappel globaux (déjà des taux pondérés par instances, donc pas
-d'ambiguïté de calcul à ce niveau). Reste un résumé, pas un remplacement : un F1 stable
-peut masquer un vrai changement de point de fonctionnement (plus de rappel/moins de
-précision utile si la priorité du projet est justement de rattraper des ratés) - lire
-aussi P et R séparément avant de conclure. Absent des rapports générés avant cette date
-(`.get(...)` partout ci-dessous) - régénérer via `training_report.py --run <dossier>`
+F1 (macro et global/pondéré, en plus de P et R déjà présents) répond au fait
+qu'une comparaison P/R qui bouge en sens opposé (précision qui monte, rappel
+qui baisse, ou l'inverse) est difficile à trancher visuellement classe par
+classe. F1 macro = MOYENNE DES F1 PAR CLASSE (pas F1 recalculé depuis
+précision/rappel macro - ce sont deux quantités différentes, voir
+`_macro_f1` dans training_report.py) ; F1 global = moyenne harmonique de
+précision/rappel globaux (déjà des taux pondérés par instances, donc pas
+d'ambiguïté de calcul à ce niveau). Reste un résumé, pas un remplacement :
+un F1 stable peut masquer un vrai changement de point de fonctionnement
+(plus de rappel/moins de précision utile si la priorité du projet est
+justement de rattraper des ratés) - lire aussi P et R séparément avant de
+conclure. Absent des rapports générés avant l'ajout de ce champ (`.get(...)`
+partout ci-dessous) - régénérer via `training_report.py --run <dossier>`
 pour l'obtenir sur un ancien run.
 
 Entrée : chemins d'au moins 2 dossiers de run, chacun contenant déjà

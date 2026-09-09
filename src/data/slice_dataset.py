@@ -48,7 +48,7 @@ from src.data.pipeline_utils import already_present, ensure_cache_is_safe, read_
 from src.data.raw_dataset import VALID_IMG_EXTS  # source partagée, voir raw_dataset.py
 from src.data.slicer import LOGIC_VERSION, PlasticImageSlicer
 
-BASE_DIR = r"E:\PixelOdyssey\3. Processed dataset"
+from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py
 AUGMENTED_DIR = os.path.join(BASE_DIR, "3_augmented_dataset")
 SLICED_DIR = os.path.join(BASE_DIR, "4_sliced_dataset")
 

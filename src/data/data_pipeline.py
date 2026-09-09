@@ -49,7 +49,7 @@ Variante de donnée brute (ex: dataset corrigé par src/review/review_false_posi
        4_sliced_dataset avec une donnée source différente). --config et --raw-dir sont indépendants et
        combinables (ex: dataset corrigé ET sans Debris_Divers à la fois).
 
-Variante de site (ajouté le 07/09/2026, ex: entraînement dédié Santa Luzia) :
+Variante de site (ex: entraînement dédié Santa Luzia) :
     python src/data/data_pipeline.py --site SL --suffix _SL
     -> même mécanisme --suffix, mais filtre les images parentes retenues à l'étape 1 par
        code de site (SL, SB, A aujourd'hui, L pour Loango à venir - voir
@@ -139,7 +139,7 @@ def run_full_pipeline(
 ) -> None:
     """`config_path`/`suffix` : voir la docstring du module ("Variante de taxonomie"). `raw_dir` :
     voir "Variante de donnée brute" (ex: 1bis_corrected_annotation produit par
-    review_false_positives.py). `site_filter` (ajouté le 07/09/2026, voir "Variante de site"
+    review_false_positives.py). `site_filter` (voir "Variante de site"
     dans la docstring du module) : entraînement dédié à un sous-ensemble de sites (ex: Santa
     Luzia seule), même mécanisme --suffix que les deux variantes ci-dessus - transmis tel quel
     à split_dataset.py (voir raw_dataset.site_of_batch pour la convention de code de site).
