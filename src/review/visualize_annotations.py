@@ -48,7 +48,7 @@ from typing import Dict, List, Optional
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, load_class_config
-from src.data.raw_dataset import VALID_IMG_EXTS
+from src.data.utils.raw_dataset import VALID_IMG_EXTS
 from src.data.slice_dataset import SLICED_DIR
 
 from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py

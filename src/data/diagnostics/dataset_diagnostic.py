@@ -89,10 +89,10 @@ masquer. "Par classe brute" reste lui aussi sur le jeu complet (recoupement
 avec dataset_audit.py, qui n'a aucune notion d'exclusion).
 
 Exemple :
-    python -m src.data.dataset_diagnostic
-    python -m src.data.dataset_diagnostic --raw-dir "1_annotated_dataset" --output diag.xlsx
-    python -m src.data.dataset_diagnostic --skip-geo   # plus rapide, sans tentative de géoloc
-    python -m src.data.dataset_diagnostic --gsd-fixe-cm-px 0.5   # autre hypothèse de GSD fixe
+    python -m src.data.diagnostics.dataset_diagnostic
+    python -m src.data.diagnostics.dataset_diagnostic --raw-dir "1_annotated_dataset" --output diag.xlsx
+    python -m src.data.diagnostics.dataset_diagnostic --skip-geo   # plus rapide, sans tentative de géoloc
+    python -m src.data.diagnostics.dataset_diagnostic --gsd-fixe-cm-px 0.5   # autre hypothèse de GSD fixe
 """
 
 import argparse
@@ -108,7 +108,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.
 import pandas as pd
 from shapely.geometry import Polygon
 
-from src.data.class_config import (
+from src.data.utils.class_config import (
     DEFAULT_CLASS_CONFIG_PATH,
     EXCLUDE,
     load_batch_local_names,
@@ -116,7 +116,7 @@ from src.data.class_config import (
     normalize_class_name,
     resolve_class_name,
 )
-from src.data.raw_dataset import collect_parent_images
+from src.data.utils.raw_dataset import collect_parent_images
 
 RAW_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset"
 OUTPUT_XLSX_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\dataset_diagnostic.xlsx"

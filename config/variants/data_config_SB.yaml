@@ -1,0 +1,83 @@
+# PixelOdyssey - Configuration du Dataset pour YOLOv11-seg
+#
+# VARIANTE SITE (10/09/2026) : copie de data_config.yaml, SEUL `path:` diffère (pointe
+# vers 4_sliced_dataset_SB au lieu de 4_sliced_dataset) - même taxonomie multiclasse
+# 7-classes que le dataset complet, entraînement dédié au site SB. Généré via :
+#   python src/data/data_pipeline.py --site SB --suffix _SB
+# Voir data_pipeline.py ("Variante de site") et le journal du 07/09/2026 (même mécanisme
+# que data_config_SL.yaml, appliqué ici au site SB).
+
+# Chemins d'accès racine et dossiers de split.
+# 4_sliced_dataset = sortie de l'étape 4 (src/data/slice_dataset.py), les imagettes 640x640
+# prêtes pour YOLO. Généré en lançant tout le pipeline en une fois avec
+# `python src/data/data_pipeline.py` (orchestrateur qui enchaîne vérification -> split ->
+# augmentation -> slicing).
+path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_SB
+train: images/train
+val: images/val
+test : images/test
+
+# ============================================================================
+# TAXONOMIE CIBLE : les super-classes apprises par le modèle. Regroupement
+# par FORME plutôt que par matière/rigidité : une classe dédiée a une forme
+# suffisamment récurrente et assez d'exemples pour être apprise séparément ;
+# sinon elle rejoint Debris_Divers (fourre-tout).
+# ============================================================================
+names:
+  0: Bouteille
+  1: Flipflops
+  2: Cagette
+  3: Bouee
+  4: Cordage_Filet
+  5: Bidon
+  6: Debris_Divers
+
+# ============================================================================
+# RÉFÉRENTIEL UNIQUE DE CLASSES — identique à config/data_config.yaml (source de
+# vérité pour tout le projet). Voir ce fichier pour la documentation complète du
+# mécanisme class_taxonomy/class_aliases - reproduit ici à l'identique, SEUL
+# `path:` ci-dessus change pour ce variant de site.
+# ============================================================================
+
+class_taxonomy:
+  "bouteille PET": 0
+  "Bouteille Plastique rigide": 0
+
+  "fliflops": 1
+
+  "cagette": 2
+
+  "Bouées": 3
+  "Bouées pieuvre": 3
+  "flotteurs": 3
+
+  "Cordage": 4
+
+  "Petit bidon": 5
+  "Sceau": 5
+
+  "Plastique souple (sac)": 6
+  "Mousse expansée": 6
+  "Polystyrene": 6
+  "Fragments plastique rigide": 6
+  "Tissu": 6
+  "casques": 6
+  "bouchons": 6
+
+  "Morceaux de bois": exclude
+  "Verre": exclude
+  "à déterminer": exclude
+  "Inconnu": exclude
+
+  "Bouteille": 0
+  "Flipflops": 1
+  "Cagette": 2
+  "Bouee": 3
+  "Cordage_Filet": 4
+  "Bidon": 5
+  "Debris_Divers": 6
+
+class_aliases:
+  "flipflops": "fliflops"
+  "bouteilles_pet": "bouteille PET"
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide"

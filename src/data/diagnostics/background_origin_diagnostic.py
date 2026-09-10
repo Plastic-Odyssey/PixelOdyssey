@@ -47,7 +47,7 @@ from typing import Dict, List, Optional, Set
 
 sys.path.append(str(Path(__file__).resolve().parents[3]))
 from src.data.augment_dataset import AUGMENTED_DIR
-from src.data.raw_dataset import VALID_IMG_EXTS
+from src.data.utils.raw_dataset import VALID_IMG_EXTS
 from src.data.slice_dataset import SLICED_DIR, SPLITS
 from src.data.slicer import PlasticImageSlicer
 

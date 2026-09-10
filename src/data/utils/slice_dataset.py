@@ -43,10 +43,10 @@ from pathlib import Path
 from typing import Dict
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.augment_dataset import MANIFEST_FILENAME as AUGMENT_MANIFEST_FILENAME
-from src.data.pipeline_utils import already_present, ensure_cache_is_safe, read_upstream_fingerprint
-from src.data.raw_dataset import VALID_IMG_EXTS  # source partagée, voir raw_dataset.py
-from src.data.slicer import LOGIC_VERSION, PlasticImageSlicer
+from src.data.utils.augment_dataset import MANIFEST_FILENAME as AUGMENT_MANIFEST_FILENAME
+from src.data.utils.pipeline_utils import already_present, ensure_cache_is_safe, read_upstream_fingerprint
+from src.data.utils.raw_dataset import VALID_IMG_EXTS  # source partagée, voir raw_dataset.py
+from src.data.utils.slicer import LOGIC_VERSION, PlasticImageSlicer
 
 from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py
 AUGMENTED_DIR = os.path.join(BASE_DIR, "3_augmented_dataset")

@@ -48,7 +48,7 @@ titre et le nom des fichiers de sortie - déduit de --batch-filter si omis).
 Sortie : `<run>/rapport_<label>_lecture.html` + `<run>/rapport_<label>_metrics.json`.
 
 Exemple :
-    python -m src.review.scoped_report --run output/runs/new_ref_vanilla_yolo11n-seg_20260827_020134 \\
+    python -m src.review.scoped_report --run "E:\PixelOdyssey\6. Model outputs\runs\new_ref_vanilla_yolo11n-seg_20260827_020134" \\
         --batch-filter "SL" --label SantaLuzia
 """
 
@@ -64,7 +64,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 import yaml
 
 from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, load_class_config
-from src.data.raw_dataset import VALID_IMG_EXTS
+from src.data.utils.raw_dataset import VALID_IMG_EXTS
 from src.data.slice_dataset import SLICED_DIR
 from src.data.split_dataset import PARENT_MANIFEST_FILENAME, SPLIT_DIR
 from src.review.assisted_annotate import LOW_SAMPLE_WARN_THRESHOLD
@@ -208,7 +208,7 @@ def run_scoped_report(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Rapport de lecture PixelOdyssey restreint à un sous-ensemble de lots.")
-    parser.add_argument("--run", required=True, help="Dossier du run (ex: output/runs/<run>)")
+    parser.add_argument("--run", required=True, help="Dossier du run (ex: \"E:\\PixelOdyssey\\6. Model outputs\\runs\\<run>\")")
     parser.add_argument("--batch-filter", required=True,
                          help="Sous-chaîne (insensible à la casse) sur le nom de lot, ex: 'SL' pour Santa Luzia.")
     parser.add_argument("--split", default="test", choices=["train", "val", "test"],

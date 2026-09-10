@@ -39,7 +39,7 @@ from PIL import UnidentifiedImageError
 from src.application.exif_metadata import PhotoMetadata, extract_photo_metadata
 from src.application.geolocation import compute_gsd_cm_per_px, pitch_within_tolerance
 from src.application.sensor_config import SensorSpec, load_sensor_registry, resolve_sensor
-from src.data.raw_dataset import VALID_IMG_EXTS
+from src.data.utils.raw_dataset import VALID_IMG_EXTS
 
 # Erreurs anticipées (levées délibérément par exif_metadata.py/sensor_config.py
 # pour un motif d'exclusion connu, ou par PIL pour un fichier illisible/corrompu

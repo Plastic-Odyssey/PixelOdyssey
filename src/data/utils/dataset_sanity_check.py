@@ -18,7 +18,7 @@ Sortie : dict {"ok", "missing_splits", "orphan_issues"} ; code de sortie 0/1
 en usage CLI.
 
 Exemple :
-    python -m src.data.dataset_sanity_check --base-path data/2_split_dataset
+    python -m src.data.utils.dataset_sanity_check --base-path data/2_split_dataset
 """
 
 import argparse
@@ -34,7 +34,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 # checker tourne aussi sur `2_split_dataset`, qui contient encore les images
 # parentes brutes (dont des .tif), donc la liste d'extensions doit couvrir
 # .tif/.tiff en plus de .jpg/.jpeg/.png pour ne pas générer de faux orphelins.
-from src.data.raw_dataset import VALID_IMG_EXTS
+from src.data.utils.raw_dataset import VALID_IMG_EXTS
 
 
 class PlasticDatasetChecker:

@@ -39,7 +39,7 @@ Sortie : fichiers image (.png) et labels (.txt) de chaque tuile, écrits sur
 disque ; nombre de tuiles produites.
 
 Exemple :
-    from src.data.slicer import PlasticImageSlicer
+    from src.data.utils.slicer import PlasticImageSlicer
     slicer = PlasticImageSlicer(tile_size=640, overlap=256)
     n_tiles = slicer.slice_single_pair(
         "img.jpg", "img.txt", "out/images", "out/labels"
@@ -53,8 +53,8 @@ import cv2
 import numpy as np
 from shapely.geometry import MultiPolygon, Polygon, box
 
-from src.data.image_io import load_image_bgr
-from src.data.tiling_geometry import iter_tile_windows
+from src.data.utils.image_io import load_image_bgr
+from src.data.utils.tiling_geometry import iter_tile_windows
 
 # Incrémenter quand la logique interne de tuilage change de façon à produire
 # une sortie différente pour les MÊMES paramètres de constructeur. Les

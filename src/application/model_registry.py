@@ -4,7 +4,7 @@
 PixelOdyssey - Registre des modèles "opérationnels" (pipeline application).
 
 Source de vérité : config/models_registry.yaml, rempli À LA MAIN par Jame -
-volontairement pas un scan automatique de output/runs/ (voir sa docstring :
+volontairement pas un scan automatique de TRAINING_RUNS_DIR (voir sa docstring :
 ce dossier contient aussi des essais de réglage expérimentaux qu'on ne veut
 jamais proposer par erreur pour un usage terrain).
 
@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import List, NamedTuple, Optional
 
 import yaml
+
+from src.paths_config import TRAINING_RUNS_DIR
 
 DEFAULT_MODELS_REGISTRY_PATH = Path("config/models_registry.yaml")
 
@@ -42,7 +44,7 @@ def load_operational_models(path: Path = DEFAULT_MODELS_REGISTRY_PATH) -> List[M
     explicite si le registre est vide - un registre vide veut dire que
     personne n'a encore désigné de modèle "prêt terrain", pas un cas à
     contourner en silence (ex : en retombant sur un modèle au hasard dans
-    output/runs)."""
+    TRAINING_RUNS_DIR)."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Registre modèles introuvable : {path}.")
@@ -55,13 +57,17 @@ def load_operational_models(path: Path = DEFAULT_MODELS_REGISTRY_PATH) -> List[M
         raise ValueError(
             f"{path} : aucun modèle opérationnel déclaré. Ajoute au moins une entrée "
             f"(voir l'exemple commenté dans le fichier) avant d'utiliser le pipeline "
-            f"application - ce n'est pas un scan automatique de output/runs, un choix "
+            f"application - ce n'est pas un scan automatique de TRAINING_RUNS_DIR, un choix "
             f"explicite est nécessaire."
         )
 
     models = []
     for entry in raw_models:
-        weights_path = Path(entry["weights_path"])
+        # `entry["weights_path"]` est relatif à TRAINING_RUNS_DIR (ex: "<run>/weights/best.pt",
+        # voir src/paths_config.py) - Path.__truediv__ laisse passer tel quel un chemin déjà
+        # absolu fourni dans le registre (rétrocompatible avec une entrée qui préciserait un
+        # emplacement hors TRAINING_RUNS_DIR).
+        weights_path = TRAINING_RUNS_DIR / entry["weights_path"]
         if not weights_path.exists():
             raise FileNotFoundError(
                 f"{path} : l'entrée {entry.get('name')!r} pointe vers un fichier de poids "

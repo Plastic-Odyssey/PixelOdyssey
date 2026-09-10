@@ -37,10 +37,10 @@ Deux modes de gel sont disponibles :
    d'objets.
 
 Exemple :
-    python -m src.data.freeze_benchmark_test
-    python -m src.data.freeze_benchmark_test --force   # regèle un nouveau banc (écrase l'ancien)
-    python -m src.data.freeze_benchmark_test --manual
-    python -m src.data.freeze_benchmark_test --manual --manual-file config/manual_test_selection.json --force
+    python -m src.data.utils.freeze_benchmark_test
+    python -m src.data.utils.freeze_benchmark_test --force   # regèle un nouveau banc (écrase l'ancien)
+    python -m src.data.utils.freeze_benchmark_test --manual
+    python -m src.data.utils.freeze_benchmark_test --manual --manual-file config/manual_test_selection.json --force
 """
 
 import argparse
@@ -51,8 +51,8 @@ from pathlib import Path, PureWindowsPath
 from typing import Dict, List
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from src.data.split_dataset import FROZEN_TEST_PATH, PARENT_MANIFEST_FILENAME, RAW_DIR, SPLIT_DIR
-from src.data.raw_dataset import collect_parent_images
+from src.data.utils.split_dataset import FROZEN_TEST_PATH, PARENT_MANIFEST_FILENAME, RAW_DIR, SPLIT_DIR
+from src.data.utils.raw_dataset import collect_parent_images
 
 # Fichier de sélection manuelle par défaut (voir freeze_manual_test()). Format :
 # {"images": ["<lot>/images/train/<fichier>", ...], "full_batches": ["<lot>", ...]}
@@ -67,7 +67,7 @@ def freeze_current_test(force: bool = False) -> Path:
     manifest_path = Path(SPLIT_DIR) / PARENT_MANIFEST_FILENAME
     if not manifest_path.exists():
         raise RuntimeError(
-            f"{manifest_path} introuvable - lance d'abord `python -m src.data.split_dataset` "
+            f"{manifest_path} introuvable - lance d'abord `python -m src.data.utils.split_dataset` "
             f"(ou le pipeline complet) au moins une fois avant de geler le banc de test."
         )
 
@@ -107,7 +107,7 @@ def freeze_current_test(force: bool = False) -> Path:
         print(f"     • {batch} : {n}")
     print(
         "\n⚠️  Prochaine étape : relance le pipeline avec --force "
-        "(`python -m src.data.data_pipeline --force`) pour que le split existant applique "
+        "(`python -m src.data.utils.data_pipeline --force`) pour que le split existant applique "
         "immédiatement ce gel - sans ça, 2_split_dataset garde son contenu actuel jusqu'au "
         "prochain changement de config qui déclencherait de toute façon une régénération."
     )
@@ -246,7 +246,7 @@ def freeze_manual_test(
         print(f"     • {batch} : {n}")
     print(
         "\n⚠️  Prochaine étape : relance le pipeline avec --force "
-        "(`python -m src.data.data_pipeline --force`) pour que ce gel manuel s'applique."
+        "(`python -m src.data.utils.data_pipeline --force`) pour que ce gel manuel s'applique."
     )
     return FROZEN_TEST_PATH
 

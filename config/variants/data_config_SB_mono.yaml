@@ -1,0 +1,67 @@
+# PixelOdyssey - Configuration MONO-CLASSE ("Dechet_Plastique" uniquement) — VARIANTE SITE
+#
+# Combine la variante mono-classe (voir config/data_config_mono_class.yaml) et la variante
+# de site SB (voir config/variants/data_config_SB.yaml) : SEULE la classe cible
+# "Dechet_Plastique", ET SEUL le site SB. `path` pointe vers un dossier dédié
+# (4_sliced_dataset_SB_mono), jamais mélangé avec les autres variantes.
+#
+# Générer le dataset tuilé correspondant :
+#   python src/data/data_pipeline.py --config config/data_config_mono_class.yaml \
+#       --site SB --suffix _SB_mono --balance-by items
+# Puis entraîner :
+#   python -m src.training.train --config config/variants/data_config_SB_mono.yaml --tag SB_mono
+
+path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_SB_mono
+train: images/train
+val: images/val
+test : images/test
+
+# ============================================================================
+# TAXONOMIE CIBLE : une seule classe - on ne cherche plus à distinguer QUOI,
+# seulement SI un déchet plastique est présent. Identique à
+# config/data_config_mono_class.yaml.
+# ============================================================================
+names:
+  0: Dechet_Plastique
+
+# ============================================================================
+# RÉFÉRENTIEL DE CLASSES - identique à config/data_config_mono_class.yaml (voir ce
+# fichier pour la documentation complète des décisions d'exclusion, reprises ici
+# à l'identique - seul `path:` ci-dessus change pour ce variant de site).
+# ============================================================================
+
+class_taxonomy:
+  "bouteille PET": 0
+  "Bouteille Plastique rigide": 0
+  "fliflops": 0
+  "cagette": 0
+  "Bouées": 0
+  "Bouées pieuvre": 0
+  "flotteurs": 0
+  "Cordage": 0
+  "Petit bidon": 0
+  "Sceau": 0
+  "Plastique souple (sac)": 0
+  "Mousse expansée": 0
+  "Polystyrene": 0
+  "Fragments plastique rigide": 0
+  "Tissu": 0
+  "casques": 0
+  "bouchons": 0
+  "Morceaux de bois": exclude
+  "Verre": exclude
+  "à déterminer": exclude
+  "Inconnu": exclude
+
+  "Bouteille": 0
+  "Flipflops": 0
+  "Cagette": 0
+  "Bouee": 0
+  "Cordage_Filet": 0
+  "Bidon": 0
+  "Debris_Divers": 0
+
+class_aliases:
+  "flipflops": "fliflops"
+  "bouteilles_pet": "bouteille PET"
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide"

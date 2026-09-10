@@ -6,7 +6,7 @@ PixelOdyssey - Tableau de bord comparatif de TOUS les runs d'entraînement.
 Complète `compare_runs.py` plutôt que de le remplacer : celui-ci reste l'outil
 de référence pour comparer 2-3 runs en détail dans le terminal (diff explicite
 des hyperparamètres/du fingerprint de donnée entre UN run de référence et
-chaque autre). Mais avec 16 runs et plus dans `output/runs/`, un tableau
+chaque autre). Mais avec 16 runs et plus dans `TRAINING_RUNS_DIR/`, un tableau
 terminal à 16 colonnes de 32 caractères devient illisible - ce script produit
 à la place une vue d'ensemble scannable (CSV + page HTML triable) où CHAQUE
 run est une ligne, avec ses paramètres ET ses performances côte à côte.
@@ -27,14 +27,16 @@ trou - args.yaml (écrit par Ultralytics) contient TOUJOURS la valeur réelle
 de ces 4 paramètres, même sur les runs où rapport_metrics.json ne les liste
 pas.
 
-Entrée : `output/runs/*/` (best.pt + args.yaml + rapport_metrics.json).
+Entrée : `TRAINING_RUNS_DIR/*/` (best.pt + args.yaml + rapport_metrics.json) - voir
+         src/paths_config.py (déménagé le 10/09/2026 hors du dépôt git).
 Sortie : `output/runs_dashboard.html` (page triable, un coup d'oeil sur tout)
          + `output/runs_dashboard.csv` (format large, un run+split par ligne,
-           pour analyse dans un tableur).
+           pour analyse dans un tableur) - ces deux fichiers de sortie restent
+           sous le dépôt (petits, régénérables, déjà exclus de git).
 
 Usage :
     python -m src.training.runs_dashboard
-    python -m src.training.runs_dashboard --runs-dir output/runs --out-html output/runs_dashboard.html
+    python -m src.training.runs_dashboard --runs-dir "E:\\PixelOdyssey\\6. Model outputs\\runs" --out-html output/runs_dashboard.html
 """
 
 import argparse
@@ -45,9 +47,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from src.paths_config import TRAINING_RUNS_DIR
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_RUNS_DIR = PROJECT_ROOT / "output" / "runs"
+DEFAULT_RUNS_DIR = TRAINING_RUNS_DIR
 DEFAULT_OUT_HTML = PROJECT_ROOT / "output" / "runs_dashboard.html"
 DEFAULT_OUT_CSV = PROJECT_ROOT / "output" / "runs_dashboard.csv"
 

@@ -22,10 +22,13 @@ models/
 *.onnx
 *.engine
 
-# Exclure tous les fichiers générés
+# Sorties d'entraînement (10/09/2026) : déménagées vers TRAINING_RUNS_DIR
+# (E:\PixelOdyssey\6. Model outputs\runs, voir src/paths_config.py) - plus
+# écrites ici en temps normal, mais exclusion large gardée en garde-fou (au
+# cas où un script écrirait par erreur un output/ local : jamais du code,
+# jamais à committer, quel que soit le nom/extension du fichier).
 output/
-outputs/
-runs/
+
 *.html
 *.geojson
 *.tif

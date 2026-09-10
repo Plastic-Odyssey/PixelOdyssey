@@ -13,7 +13,7 @@ Constantes :
     MANIFEST_FILENAME  Nom par défaut du fichier manifeste de cache incrémental.
 
 Exemple :
-    from src.data.pipeline_utils import ensure_cache_is_safe
+    from src.data.utils.pipeline_utils import ensure_cache_is_safe
     ensure_cache_is_safe(output_dir, current_params, force=False, wipe_subdirs=["images", "labels"])
 """
 
@@ -73,7 +73,7 @@ class RunConfirmation:
     (voir `read_upstream_fingerprint`) fait qu'un changement en étape 1 déclenche généralement
     un mismatch en cascade sur les étapes suivantes.
 
-    Sans effet quand une étape est lancée seule (`python -m src.data.split_dataset`) : ne pas
+    Sans effet quand une étape est lancée seule (`python -m src.data.utils.split_dataset`) : ne pas
     passer d'instance dans ce cas, chaque étape garde alors sa propre invite indépendante.
     `data_pipeline.py` crée UNE instance et la transmet aux 3 étapes de son run.
 

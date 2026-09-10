@@ -40,8 +40,8 @@ from pathlib import Path
 from typing import Dict
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.pipeline_utils import ensure_cache_is_safe, read_upstream_fingerprint
-from src.data.split_dataset import MANIFEST_FILENAME as SPLIT_MANIFEST_FILENAME
+from src.data.utils.pipeline_utils import ensure_cache_is_safe, read_upstream_fingerprint
+from src.data.utils.split_dataset import MANIFEST_FILENAME as SPLIT_MANIFEST_FILENAME
 
 from src.paths_config import PROCESSED_DATASET_DIR as BASE_DIR  # racine centralisee (08/09/2026), voir src/paths_config.py
 SPLIT_DIR = os.path.join(BASE_DIR, "2_split_dataset")

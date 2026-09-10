@@ -21,7 +21,7 @@ pour combiner les deux contraintes ("le plus carré possible" ET "sous le
 plafond CVAT") sans qu'elles se contredisent.
 
 Exemple :
-    from src.data.tiling_geometry import iter_tile_windows
+    from src.data.utils.tiling_geometry import iter_tile_windows
     for x0, y0, x1, y1 in iter_tile_windows(img_w=4000, img_h=3000, tile_size=640, stride=512):
         tile = img[y0:y1, x0:x1]
 

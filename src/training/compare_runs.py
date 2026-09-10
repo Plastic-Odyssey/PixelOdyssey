@@ -34,8 +34,8 @@ Sortie : tableau comparatif affiché dans le terminal ; `--out-csv` optionnel
 pour un export par classe/run/split exploitable dans un tableur.
 
 Exemple :
-    python -m src.training.compare_runs output/runs/sans_source_X output/runs/avec_source_X
-    python -m src.training.compare_runs output/runs/run_a output/runs/run_b --out-csv comparaison.csv
+    python -m src.training.compare_runs "E:\PixelOdyssey\6. Model outputs\runs\sans_source_X" "E:\PixelOdyssey\6. Model outputs\runs\avec_source_X"
+    python -m src.training.compare_runs "E:\PixelOdyssey\6. Model outputs\runs\run_a" "E:\PixelOdyssey\6. Model outputs\runs\run_b" --out-csv comparaison.csv
 """
 
 import argparse
@@ -202,7 +202,7 @@ def compare_runs(run_dirs: List[str], out_csv: Optional[str] = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compare les métriques de plusieurs runs PixelOdyssey.")
-    parser.add_argument("runs", nargs="+", help="≥2 dossiers de run (ex: output/runs/run_a output/runs/run_b)")
+    parser.add_argument("runs", nargs="+", help="≥2 dossiers de run (ex: \"E:\\PixelOdyssey\\6. Model outputs\\runs\\run_a\" ...)")
     parser.add_argument("--out-csv", default=None, help="Chemin d'un CSV optionnel (une ligne par classe/run/split)")
     args = parser.parse_args()
     try:

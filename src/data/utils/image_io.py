@@ -14,7 +14,7 @@ Constantes :
     _TIFF_EXTS  Extensions routées vers le chargeur rasterio plutôt que cv2.
 
 Exemple :
-    from src.data.image_io import load_image_bgr
+    from src.data.utils.image_io import load_image_bgr
     img = load_image_bgr("lot/images/photo1.jpg")
     if img is not None:
         h, w = img.shape[:2]

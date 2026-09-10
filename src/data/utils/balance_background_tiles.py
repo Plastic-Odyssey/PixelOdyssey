@@ -72,9 +72,9 @@ interrompue sans repartir de zéro).
 Sortie : dossier <output-dir>/{images,labels}/{train,val,test} + BALANCING_MANIFEST.json.
 
 Exemple :
-    python -m src.data.balance_background_tiles --dry-run
-    python -m src.data.balance_background_tiles --max-empty-pct 20 --seed 42
-    python -m src.data.balance_background_tiles --sliced-dir "E:\\PixelOdyssey\\3. Processed dataset\\4_sliced_dataset_mono_class"
+    python -m src.data.utils.balance_background_tiles --dry-run
+    python -m src.data.utils.balance_background_tiles --max-empty-pct 20 --seed 42
+    python -m src.data.utils.balance_background_tiles --sliced-dir "E:\\PixelOdyssey\\3. Processed dataset\\4_sliced_dataset_mono_class"
 """
 
 import argparse
@@ -89,7 +89,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from src.data.slice_dataset import SLICED_DIR, SPLITS
+from src.data.utils.slice_dataset import SLICED_DIR, SPLITS
 
 DEFAULT_MAX_EMPTY_PCT = 20.0
 DEFAULT_SEED = 42

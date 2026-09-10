@@ -10,7 +10,7 @@ Constantes :
     VALID_IMG_EXTS  Extensions d'image reconnues comme image parente valide.
 
 Exemple :
-    from src.data.raw_dataset import collect_parent_images
+    from src.data.utils.raw_dataset import collect_parent_images
     parents = collect_parent_images("data/1_annotated_dataset")
 
 Entrée : chemin du dossier racine du dataset annoté brut.

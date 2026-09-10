@@ -60,7 +60,7 @@ Sortie : rapport sur stdout ; code de sortie 0 si le dataset brut est
 cohérent, 1 sinon (le point 5 ci-dessus n'affecte jamais ce code de sortie).
 
 Exemple :
-    python -m src.data.raw_dataset_checker --raw-path 1_annotated_dataset
+    python -m src.data.utils.raw_dataset_checker --raw-path 1_annotated_dataset
 """
 
 import os
@@ -71,7 +71,7 @@ from typing import Dict, List, Set
 from shapely.geometry import Polygon
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.class_config import (
+from src.data.utils.class_config import (
     ClassTaxonomy,
     EXCLUDE,
     load_batch_local_names,
@@ -80,7 +80,7 @@ from src.data.class_config import (
 )
 # Importé depuis raw_dataset.py (source partagée), pas redéfini ici, pour
 # éviter que deux copies identiques divergent silencieusement.
-from src.data.raw_dataset import VALID_IMG_EXTS
+from src.data.utils.raw_dataset import VALID_IMG_EXTS
 # Réutilisé tel quel (même calcul que pour comparer GT<->prédiction en revue,
 # voir tiled_inference.py/label_review.py) : l'IoU est invariant à l'échelle
 # tant que x et y sont mis à l'échelle uniformément, donc valide directement

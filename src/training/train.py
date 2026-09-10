@@ -19,7 +19,7 @@ Non-écrasement des runs
 Chaque run est enregistré dans un dossier UNIQUE, nommé à partir du modèle
 choisi et d'un horodatage à la seconde (voir `_build_run_name`) :
 
-    output/runs/<RUN_TAG>_<modèle>_<AAAAMMJJ_HHMMSS>/
+    E:\PixelOdyssey\6. Model outputs\runs\<RUN_TAG>_<modèle>_<AAAAMMJJ_HHMMSS>\
 
 `exist_ok=False` est passé à `model.train()` comme garde-fou supplémentaire :
 si jamais deux runs partageaient malgré tout le même nom (cas extrême : deux
@@ -35,10 +35,11 @@ taux de faux positifs/négatifs, graphique précision/rappel, matrice de
 confusion. Il peut aussi être regénéré à tout moment pour un run passé, sans
 relancer l'entraînement :
 
-    python -m src.training.training_report --run output/runs/<nom_du_run>
+    python -m src.training.training_report --run "E:\PixelOdyssey\6. Model outputs\runs\<nom_du_run>"
 
 Entrée : dataset configuré via config/data_config.yaml, paramètres de la section 1 ci-dessus.
-Sortie : poids entraînés + rapport HTML dans output/runs/<nom_du_run>/.
+Sortie : poids entraînés + rapport HTML dans TRAINING_RUNS_DIR/<nom_du_run>/ (voir
+         src/paths_config.py - déménagé hors du dépôt git le 10/09/2026).
 
 Exemples (voir --help pour la liste complète des options) :
 
@@ -56,8 +57,8 @@ Exemples (voir --help pour la liste complète des options) :
     # --raw-dir/--suffix pour le générer). --tag n'est jamais déduit automatiquement
     # de --config : à fournir explicitement pour un nom de run lisible.
     python -m src.training.train --config config/data_config_mono_class.yaml --tag mono_class
-    python -m src.training.train --config config/data_config_no_debris.yaml --tag no_debris
-    python -m src.training.train --config config/data_config_SL.yaml --tag SL_dedie
+    python -m src.training.train --config config/variants/data_config_no_debris.yaml --tag no_debris
+    python -m src.training.train --config config/variants/data_config_SL.yaml --tag SL_dedie
 
     # Défauts Ultralytics purs pour l'augmentation/le rééquilibrage (degrees, flipud,
     # copy_paste, copy_paste_mode, cls_pw, mixup, overlap_mask NON transmis - voir la
@@ -77,6 +78,7 @@ from ultralytics import YOLO
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from src.training.training_report import generate_report
+from src.paths_config import TRAINING_RUNS_DIR
 
 # ============================================================================
 # 1. PARAMÈTRES À AJUSTER
@@ -170,7 +172,7 @@ OVERLAP_MASK = False
 # mosaic (défaut Ultralytics 1.0, close_mosaic=10) : actif à son maximum sur tous les runs du projet,
 # jamais désactivé ni testé comme variable.
 
-# --- Étiquette libre pour retrouver ce run dans output/runs/ ---------------
+# --- Étiquette libre pour retrouver ce run dans TRAINING_RUNS_DIR ----------
 # Sert uniquement à la lisibilité du nom de dossier - mets ce que tu veux,
 # par ex. "baseline", "test_yolov8s", "sans_class_nonplastique", etc.
 RUN_TAG = "baseline"
@@ -181,12 +183,18 @@ RUN_TAG = "baseline"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
-OUTPUT_DIR = PROJECT_ROOT / "output" / "runs"
+# Sorties d'entraînement (poids, args.yaml, rapports) - déménagées le 10/09/2026 hors du
+# dépôt git (impossible à pousser avec des poids de plusieurs dizaines/centaines de Mo par
+# run) vers TRAINING_RUNS_DIR, voir src/paths_config.py. Comportement de nommage/non-
+# écrasement des runs inchangé par ailleurs, seule la racine change.
+OUTPUT_DIR = TRAINING_RUNS_DIR
 # Emplacement dédié des poids pré-entraînés (nettoyage du 08/09/2026 : YOLO(MODEL_WEIGHTS)
 # avec un simple nom de fichier téléchargeait auparavant dans le dossier courant, dispersant
 # des .pt à la racine du repo à chaque changement de MODEL_WEIGHTS - Ultralytics télécharge
 # à l'emplacement exact donné si le fichier n'y existe pas encore, donc ce chemin suffit à
-# corriger ça pour de bon)
+# corriger ça pour de bon). Reste sous le dépôt (contrairement à OUTPUT_DIR ci-dessus) :
+# ce sont des dépendances re-téléchargeables, pas des sorties du travail de Jame - déjà
+# exclu de git via la règle `models/` du .gitignore, pas besoin de le déplacer physiquement.
 PRETRAINED_DIR = PROJECT_ROOT / "models" / "pretrained"
 
 
@@ -200,7 +208,7 @@ def _build_run_name(model_weights: str, tag: str) -> str:
 
 def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = False, run_tag: str = RUN_TAG):
     """`config_path` : référentiel de classes/dataset à utiliser (défaut : config/data_config.yaml).
-    Pour une variante expérimentale (ex: config/data_config_no_debris.yaml, qui pointe vers son
+    Pour une variante expérimentale (ex: config/variants/data_config_no_debris.yaml, qui pointe vers son
     propre `path:` de dataset tuilé - voir data_pipeline.py --config/--suffix pour la générer),
     passe --config en ligne de commande plutôt que d'éditer CONFIG_PATH ci-dessus : ça évite de
     laisser une expérience active par erreur pour le prochain run "normal".
@@ -282,7 +290,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", default=str(CONFIG_PATH),
         help="Référentiel de classes/dataset à utiliser (défaut : config/data_config.yaml). "
-             "Pour une variante expérimentale (ex: config/data_config_no_debris.yaml), le "
+             "Pour une variante expérimentale (ex: config/variants/data_config_no_debris.yaml), le "
              "dataset tuilé correspondant doit déjà exister (voir data_pipeline.py --config/--suffix).",
     )
     parser.add_argument(

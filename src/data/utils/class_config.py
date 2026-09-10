@@ -25,7 +25,7 @@ Constantes :
     EXCLUDE                    Valeur spéciale dans class_taxonomy : classe toujours ignorée.
 
 Exemple :
-    from src.data.class_config import load_class_config, resolve_class_name
+    from src.data.utils.class_config import load_class_config, resolve_class_name
     taxonomy, target_names = load_class_config()
     super_class_id = resolve_class_name("Bouées", taxonomy)
 
@@ -41,8 +41,8 @@ from typing import Dict, Optional, Tuple, Union
 
 import yaml
 
-# src/data/class_config.py -> parents[2] = racine du repo.
-DEFAULT_CLASS_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "data_config.yaml"
+# src/data/utils/class_config.py -> parents[3] = racine du repo.
+DEFAULT_CLASS_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "data_config.yaml"
 
 EXCLUDE = "exclude"  # valeur spéciale dans class_taxonomy : classe toujours ignorée.
 

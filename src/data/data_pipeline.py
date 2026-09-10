@@ -34,7 +34,7 @@ Usage :
     python src/data/data_pipeline.py --force      # + reconstruit les étapes dont la config a changé
 
 Variante de taxonomie (ex: dataset expérimental "sans Debris_Divers") :
-    python src/data/data_pipeline.py --config config/data_config_no_debris.yaml --suffix _no_debris
+    python src/data/data_pipeline.py --config config/variants/data_config_no_debris.yaml --suffix _no_debris
     -> écrit dans 2_split_dataset_no_debris / 3_augmented_dataset_no_debris / 4_sliced_dataset_no_debris,
        AUCUN fichier partagé avec le pipeline par défaut (seul 1_annotated_dataset, la donnée brute
        source, reste commun). --suffix est obligatoire dès que --config diffère du défaut - garde-fou
@@ -60,7 +60,7 @@ Variante de site (ex: entraînement dédié Santa Luzia) :
        confondus) reste commun, seul le split résultant change. Plusieurs sites
        combinables (--site SL,A). --config/--raw-dir/--site sont tous indépendants et
        combinables entre eux. Une fois le dataset filtré généré, crée un
-       config/data_config_SL.yaml (copie de data_config.yaml, seul `path:` change vers
+       config/variants/data_config_SL.yaml (copie de data_config.yaml, seul `path:` change vers
        4_sliced_dataset_SL) pour lancer l'entraînement (voir train.py --config).
 """
 
@@ -71,12 +71,12 @@ from pathlib import Path
 from typing import List, Optional
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.augment_dataset import AUGMENTED_DIR, run_augment
-from src.data.dataset_sanity_check import PlasticDatasetChecker
-from src.data.pipeline_utils import RunConfirmation
-from src.data.raw_dataset_checker import RawDatasetValidator
-from src.data.slice_dataset import SLICED_DIR, run_slice
-from src.data.split_dataset import RAW_DIR, SPLIT_DIR, run_split
+from src.data.utils.augment_dataset import AUGMENTED_DIR, run_augment
+from src.data.utils.dataset_sanity_check import PlasticDatasetChecker
+from src.data.utils.pipeline_utils import RunConfirmation
+from src.data.utils.raw_dataset_checker import RawDatasetValidator
+from src.data.utils.slice_dataset import SLICED_DIR, run_slice
+from src.data.utils.split_dataset import RAW_DIR, SPLIT_DIR, run_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"

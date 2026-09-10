@@ -48,7 +48,7 @@ config/data_config.yaml (ou un chemin explicite).
 Sortie : `<run_dir>/rapport_lecture.html` + `<run_dir>/rapport_metrics.json`.
 
 Exemple :
-    python src/training/training_report.py --run output/runs/mon_run
+    python src/training/training_report.py --run "E:\PixelOdyssey\6. Model outputs\runs\mon_run"
 """
 
 import argparse
@@ -700,7 +700,7 @@ def generate_report(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Génère le rapport de lecture HTML d'un run d'entraînement PixelOdyssey.")
-    parser.add_argument("--run", required=True, help="Dossier du run (ex: output/runs/baseline_yolo11n-seg_AAAAMMJJ_HHMMSS)")
+    parser.add_argument("--run", required=True, help="Dossier du run (ex: \"E:\\PixelOdyssey\\6. Model outputs\\runs\\baseline_yolo11n-seg_AAAAMMJJ_HHMMSS\")")
     parser.add_argument("--data", default=None, help="Chemin vers data_config.yaml (par défaut : config/data_config.yaml du projet)")
     parser.add_argument("--weights", default="best.pt", help="Nom du fichier de poids à évaluer, dans <run>/weights/ (défaut: best.pt)")
     parser.add_argument("--splits", default="val,test", help="Splits à évaluer, séparés par des virgules (défaut: val,test)")
