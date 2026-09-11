@@ -5,7 +5,7 @@
 # prêtes pour YOLO. Généré en lançant tout le pipeline en une fois avec
 # `python src/data/data_pipeline.py` (orchestrateur qui enchaîne vérification -> split ->
 # augmentation -> slicing).
-path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset
+path: D:\PixelOdyssey\3. Processed dataset\4_sliced_dataset
 train: images/train
 val: images/val
 test : images/test

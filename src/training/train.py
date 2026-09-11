@@ -69,13 +69,27 @@ Exemples (voir --help pour la liste complète des options) :
     python -m src.training.train --config config/data_config_mono_class.yaml --default-augment --tag mono_class_defaults
 """
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
+# Doit être fait AVANT tout import de torch/ultralytics (l'initialisation du
+# runtime OpenMP a lieu à l'import) : évite "OMP: Error #15 - libiomp5md.dll
+# already initialized" (torch et numpy embarquent chacun leur propre copie du
+# runtime OpenMP sous Windows). Fixé ici plutôt que par variable d'environnement
+# système/conda - fonctionne quel que soit comment le script est lancé (terminal
+# activé ou non, noyau Jupyter, bouton "Run" de VS Code...), sans étape manuelle
+# à reproduire sur chaque machine. setdefault : un choix explicite de
+# l'utilisateur (variable déjà positionnée avant de lancer le script) n'est
+# jamais écrasé.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+import torch
 from ultralytics import YOLO
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH
 from src.training.training_report import generate_report
 
 # ============================================================================
@@ -108,11 +122,20 @@ EPOCHS = 100         # nombre maximal d'epochs - l'arrêt anticipé (PATIENCE) c
 IMGSZ = 640          # doit correspondre à la taille des tuiles du dataset (voir slice_dataset.py)
 BATCH = 16           # -1 = laisse Ultralytics choisir automatiquement selon la VRAM disponible
 PATIENCE = 20        # arrêt anticipé si aucune amélioration après N epochs (0 = désactivé, va au bout des EPOCHS)
-DEVICE = 0           # 0 = 1er GPU ; "cpu" = CPU ; "0,1" = multi-GPU
-WORKERS = 4          # parallélisme du chargement des données. En cas de crash de ressources système
-                     # sous Windows (WinError 1450) pendant l'entraînement ou la validation, abaisser
-                     # cette valeur (jusqu'à 1 si besoin) est la mitigation connue - au prix d'un
-                     # chargement de données plus lent.
+DEVICE = 0           # 0 = 1er GPU ; "cpu" = CPU ; "0,1" = multi-GPU - repli automatique sur CPU si
+                     # aucun GPU CUDA n'est détecté (voir _resolve_device), donc laisser 0 ici ne
+                     # plante plus sur une machine/installation sans CUDA (torch CPU-only par ex.)
+WORKERS = 2          # parallélisme du chargement des données. À 0, tout se fait dans le process
+                     # principal : le GPU attend alors le CPU entre chaque batch (chargement +
+                     # augmentation), d'où une utilisation GPU proche de 0% malgré de la VRAM occupée -
+                     # observé le 11/09/2026 après être passé à 0 pour éviter un crash mémoire (voir
+                     # ci-dessous). 2 restaure un minimum de recouvrement CPU/GPU sans redemander
+                     # autant de mémoire que 4 : avec CUDA, CHAQUE worker réimporte torch (donc recharge
+                     # les DLL CUDA, plusieurs centaines de Mo) dans son propre sous-processus - WORKERS
+                     # élevé démultiplie d'autant la mémoire/pagination requise, cause du crash Windows
+                     # WinError 1450/1455 ("ressources système"/"fichier de pagination insuffisant" au
+                     # chargement de cublas64_12.dll). Ce réglage suppose le fichier d'échange Windows
+                     # agrandi (voir guide de setup, 1.4) - sinon repasser à 0 en attendant.
 
 # --- Augmentation géométrique : correction d'un fait du dataset, pas un levier de rééquilibrage ----
 #
@@ -180,7 +203,9 @@ RUN_TAG = "baseline"
 # ============================================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
+# Dérivé de class_config.py (seule source de vérité pour ce chemin) plutôt
+# que recalculé ici à partir de PROJECT_ROOT.
+CONFIG_PATH = DEFAULT_CLASS_CONFIG_PATH
 OUTPUT_DIR = PROJECT_ROOT / "output" / "runs"
 # Emplacement dédié des poids pré-entraînés (nettoyage du 08/09/2026 : YOLO(MODEL_WEIGHTS)
 # avec un simple nom de fichier téléchargeait auparavant dans le dossier courant, dispersant
@@ -188,6 +213,26 @@ OUTPUT_DIR = PROJECT_ROOT / "output" / "runs"
 # à l'emplacement exact donné si le fichier n'y existe pas encore, donc ce chemin suffit à
 # corriger ça pour de bon)
 PRETRAINED_DIR = PROJECT_ROOT / "models" / "pretrained"
+
+
+def _resolve_device(device):
+    """Retombe sur "cpu" si `device` demande un GPU CUDA (int, "0", "0,1"...) et
+    qu'aucun n'est disponible - CUDA absent (pas de carte NVIDIA) ou torch installé
+    en version CPU-only (cas fréquent : `pip install ultralytics` seul tire par
+    défaut le wheel torch CPU sous Windows, sans le build CUDA de pytorch.org).
+    Sans ce garde-fou, Ultralytics lève une ValueError bloquante ("Invalid CUDA
+    'device=0' requested") au lieu de simplement tourner sur CPU (plus lent, mais
+    fonctionnel). Explicitement "cpu" n'est jamais réécrit : un choix explicite
+    de l'utilisateur est toujours respecté tel quel."""
+    if isinstance(device, str) and device.strip().lower() == "cpu":
+        return device
+    if not torch.cuda.is_available():
+        print(f"⚠️  Aucun GPU CUDA détecté (device={device!r} demandé) - repli sur CPU. "
+              "Si une carte NVIDIA est pourtant présente, vérifie l'installation de torch "
+              "(https://pytorch.org/get-started/locally/ - il faut le build CUDA, pas la "
+              "version CPU tirée par défaut avec `pip install ultralytics`).")
+        return "cpu"
+    return device
 
 
 def _build_run_name(model_weights: str, tag: str) -> str:
@@ -220,9 +265,12 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
     run_name = _build_run_name(MODEL_WEIGHTS, run_tag)
     run_dir = OUTPUT_DIR / run_name
 
+    resolved_device = _resolve_device(DEVICE)
+
     print("--- 🏋️ INITIALISATION DE L'ENTRAÎNEMENT PIXELODYSSEY ---")
     print(f"Modèle              : {MODEL_WEIGHTS}")
     print(f"Config data          : {config_path}")
+    print(f"Device               : {resolved_device}")
     print(f"Dossier de sortie    : {run_dir}")
     if default_augment:
         print("Augmentation        : DÉFAUTS ULTRALYTICS PURS (--default-augment) - degrees/flipud/"
@@ -237,7 +285,7 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
         epochs=EPOCHS,
         imgsz=IMGSZ,
         batch=BATCH,
-        device=DEVICE,
+        device=resolved_device,
         workers=WORKERS,
         patience=PATIENCE,
         project=str(OUTPUT_DIR),

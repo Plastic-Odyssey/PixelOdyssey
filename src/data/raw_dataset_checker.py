@@ -71,8 +71,10 @@ from typing import Dict, List, Set
 from shapely.geometry import Polygon
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from src.paths_config import ANNOTATED_DATASET_DIR
 from src.data.class_config import (
     ClassTaxonomy,
+    DEFAULT_CLASS_CONFIG_PATH,
     EXCLUDE,
     load_batch_local_names,
     load_class_config,
@@ -357,14 +359,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Vérificateur pré-slicing PixelOdyssey")
     parser.add_argument(
         "--raw-path",
-        default=r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset",
-        help="Dossier racine des lots d'annotation bruts.",
+        default=str(ANNOTATED_DATASET_DIR),
+        help="Dossier racine des lots d'annotation bruts (défaut : dérivé de "
+             "paths_config.py, voir PIXELODYSSEY_DATA_DIR pour changer de disque).",
     )
     parser.add_argument(
         "--reference-yaml",
-        default="config/data_config.yaml",
+        default=str(DEFAULT_CLASS_CONFIG_PATH),
         help="Chemin vers le référentiel unique de classes du projet "
-             "(par défaut : config/data_config.yaml, à la racine du repo).",
+             "(par défaut : dérivé de class_config.DEFAULT_CLASS_CONFIG_PATH).",
     )
     parser.add_argument(
         "--reference-key",

@@ -49,11 +49,14 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.
 from src.data.class_config import load_batch_local_names, normalize_class_name
 from src.data.image_io import load_image_bgr
 from src.data.raw_dataset import collect_parent_images
+from src.paths_config import ANNOTATED_DATASET_DIR, PROCESSED_DATASET_DIR
 
 from shapely.geometry import Polygon
 
-RAW_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset"
-OUTPUT_CSV_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\dataset_audit_report.csv"
+# Dérivés de paths_config.py (seule source de vérité pour la racine du
+# disque de données) plutôt que redéfinis en dur ici.
+RAW_DIR_DEFAULT = str(ANNOTATED_DATASET_DIR)
+OUTPUT_CSV_DEFAULT = str(PROCESSED_DATASET_DIR / "dataset_audit_report.csv")
 
 # Mêmes divergences d'orthographe que class_aliases (config/data_config.yaml),
 # dupliquées ici pour que cet outil reste utilisable même si ce fichier est

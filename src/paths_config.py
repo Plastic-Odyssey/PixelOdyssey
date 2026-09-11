@@ -24,7 +24,7 @@ FileNotFoundError générique sans rapport apparent avec la vraie cause
 import os
 from pathlib import Path
 
-_DEFAULT_DATA_ROOT = r"E:\PixelOdyssey"
+_DEFAULT_DATA_ROOT = r"D:\PixelOdyssey"
 _ENV_VAR = "PIXELODYSSEY_DATA_DIR"
 
 
@@ -54,3 +54,19 @@ DATA_ROOT = _resolve_data_root()
 # ---------------------------------------------------------------------------
 PROCESSED_DATASET_DIR = DATA_ROOT / "3. Processed dataset"
 RESULTS_DIR = DATA_ROOT / "4. Results"
+
+# ---------------------------------------------------------------------------
+# Sous-dossiers de convention utilisés comme valeur PAR DÉFAUT par plusieurs
+# scripts indépendants (dataset_audit.py, dataset_diagnostic.py,
+# raw_dataset_checker.py, assisted_annotate.py, application/paths.py...).
+# Centralisés ici pour n'avoir qu'une seule source de vérité : avant, chacun
+# de ces scripts redéfinissait son propre chemin par défaut en dur (et
+# certains pointaient vers un lecteur E:\ oublié, divergent du D:\ réel -
+# audit du 10/09/2026, voir journal de décisions). Un script garde la
+# possibilité de passer un chemin différent en argument ; seule la valeur par
+# défaut est désormais dérivée d'ici.
+# ---------------------------------------------------------------------------
+ANNOTATED_DATASET_DIR = PROCESSED_DATASET_DIR / "1_annotated_dataset"
+SPLIT_DATASET_DIR = PROCESSED_DATASET_DIR / "2_split_dataset"
+ASSISTED_ANNOTATION_DIR = RESULTS_DIR / "1_assisted_annotation"
+PREDICTION_DIR = RESULTS_DIR / "2_prediction"

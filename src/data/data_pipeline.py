@@ -72,6 +72,7 @@ from typing import List, Optional
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.data.augment_dataset import AUGMENTED_DIR, run_augment
+from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH
 from src.data.dataset_sanity_check import PlasticDatasetChecker
 from src.data.pipeline_utils import RunConfirmation
 from src.data.raw_dataset_checker import RawDatasetValidator
@@ -79,7 +80,9 @@ from src.data.slice_dataset import SLICED_DIR, run_slice
 from src.data.split_dataset import RAW_DIR, SPLIT_DIR, run_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
+# Dérivé de class_config.py (seule source de vérité pour ce chemin) plutôt
+# que recalculé ici à partir de PROJECT_ROOT.
+CONFIG_PATH = DEFAULT_CLASS_CONFIG_PATH
 
 
 def _validate_config_suffix_pairing(

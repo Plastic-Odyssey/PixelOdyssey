@@ -35,10 +35,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 # parentes brutes (dont des .tif), donc la liste d'extensions doit couvrir
 # .tif/.tiff en plus de .jpg/.jpeg/.png pour ne pas générer de faux orphelins.
 from src.data.raw_dataset import VALID_IMG_EXTS
+# Idem pour le chemin par défaut du référentiel de classes : dérivé de
+# class_config.py (seule source de vérité), jamais réécrit en dur ici.
+from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH
 
 
 class PlasticDatasetChecker:
-    def __init__(self, config_path: str = "config/data_config.yaml", base_path: Optional[str] = None):
+    def __init__(self, config_path: str = str(DEFAULT_CLASS_CONFIG_PATH), base_path: Optional[str] = None):
         """`base_path` prend le pas sur `config_path` s'il est fourni - pratique pour
         pointer ponctuellement vers une étape intermédiaire (ex: 2_split_dataset)
         sans avoir à maintenir un fichier de config séparé pour chaque étape."""
@@ -106,7 +109,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Vérificateur d'intégrité images/labels PixelOdyssey")
     parser.add_argument(
         "--config",
-        default="config/data_config.yaml",
+        default=str(DEFAULT_CLASS_CONFIG_PATH),
         help="Fichier de config à lire pour 'path' (ignoré si --base-path est fourni).",
     )
     parser.add_argument(
