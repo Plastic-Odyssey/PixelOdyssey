@@ -25,8 +25,8 @@ from typing import Callable, List, Union
 import numpy as np
 from shapely.geometry import Polygon
 
-from src.data.image_io import load_image_bgr
-from src.data.tiling_geometry import iter_tile_windows
+from src.data.utils.image_io import load_image_bgr
+from src.data.utils.tiling_geometry import iter_tile_windows
 from src.review.matching import LabeledPolygon
 
 # Une prédiction de tuile brute : (class_id, confidence, polygon_xy_tile_local_pixels)

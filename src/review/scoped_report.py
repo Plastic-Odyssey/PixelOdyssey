@@ -63,10 +63,10 @@ from typing import Dict, List, Optional
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 import yaml
 
-from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, load_class_config
+from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH, load_class_config
 from src.data.utils.raw_dataset import VALID_IMG_EXTS
-from src.data.slice_dataset import SLICED_DIR
-from src.data.split_dataset import PARENT_MANIFEST_FILENAME, SPLIT_DIR
+from src.data.utils.slice_dataset import SLICED_DIR
+from src.data.utils.split_dataset import PARENT_MANIFEST_FILENAME, SPLIT_DIR
 from src.review.assisted_annotate import LOW_SAMPLE_WARN_THRESHOLD
 from src.review.visualize_annotations import _parse_yolo_seg_label
 from src.training.training_report import generate_report

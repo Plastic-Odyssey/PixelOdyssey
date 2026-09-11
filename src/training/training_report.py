@@ -571,9 +571,9 @@ def _read_sliced_data_fingerprint() -> Optional[str]:
     régénéré plus tard après un nouveau run de data_pipeline.py. Best-effort :
     None si indisponible (chemin non monté, dataset jamais slicé...)."""
     try:
-        from src.data.pipeline_utils import read_upstream_fingerprint
-        from src.data.slice_dataset import MANIFEST_FILENAME as SLICE_MANIFEST_FILENAME
-        from src.data.slice_dataset import SLICED_DIR
+        from src.data.utils.pipeline_utils import read_upstream_fingerprint
+        from src.data.utils.slice_dataset import MANIFEST_FILENAME as SLICE_MANIFEST_FILENAME
+        from src.data.utils.slice_dataset import SLICED_DIR
         return read_upstream_fingerprint(Path(SLICED_DIR) / SLICE_MANIFEST_FILENAME)
     except Exception:
         return None
@@ -607,7 +607,7 @@ def generate_report(
     import yaml
     from ultralytics import YOLO  # import tardif : évite de charger torch si le module est juste inspecté
 
-    from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy
+    from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy
 
     run_dir = Path(run_dir)
     weights_path = run_dir / "weights" / weights_name

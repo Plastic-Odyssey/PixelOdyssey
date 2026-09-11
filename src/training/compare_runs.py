@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from src.data.pipeline_utils import diff_params
+from src.data.utils.pipeline_utils import diff_params
 
 NO_DIFF_PLACEHOLDER = ["  (impossible de déterminer le détail - manifest précédent incomplet)"]
 

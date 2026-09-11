@@ -90,7 +90,7 @@ import torch
 from ultralytics import YOLO
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH
+from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH
 from src.training.training_report import generate_report
 from src.paths_config import TRAINING_RUNS_DIR
 

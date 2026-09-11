@@ -87,8 +87,8 @@ from src.application.map_builder import render_map_page
 from src.application.paths import DEFAULT_PREDICTION_DIR
 from src.application.stats_panel import compute_aggregate_stats
 from src.application.weight_estimation import estimate_weight_kg
-from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
-from src.data.tiling_geometry import iter_tile_windows
+from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
+from src.data.utils.tiling_geometry import iter_tile_windows
 from src.review.matching import LabeledPolygon
 from src.review.tiled_inference import PredictTileFn, make_ultralytics_predict_fn, nms_merge
 

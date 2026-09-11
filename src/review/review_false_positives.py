@@ -87,7 +87,7 @@ from urllib.parse import urlparse
 import yaml
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.class_config import (
+from src.data.utils.class_config import (
     DEFAULT_CLASS_CONFIG_PATH,
     assert_model_matches_taxonomy,
     load_batch_local_names,
@@ -95,8 +95,8 @@ from src.data.class_config import (
     load_global_class_options,
     normalize_class_name,
 )
-from src.data.image_io import load_image_bgr
-from src.data.split_dataset import PARENT_MANIFEST_FILENAME, RAW_DIR, SPLIT_DIR
+from src.data.utils.image_io import load_image_bgr
+from src.data.utils.split_dataset import PARENT_MANIFEST_FILENAME, RAW_DIR, SPLIT_DIR
 from src.review.assisted_annotate import _build_crop_jpeg, _normalize_geom_to_full_image
 from src.review.label_review import (
     BASE_DIR,

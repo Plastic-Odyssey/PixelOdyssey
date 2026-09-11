@@ -78,12 +78,12 @@ import numpy as np
 
 from src.application.model_registry import load_operational_models, resolve_model_choice
 from src.application.stats_panel import compute_aggregate_stats, render_stats_html
-from src.data.class_config import (
+from src.data.utils.class_config import (
     DEFAULT_CLASS_CONFIG_PATH,
     assert_model_matches_taxonomy,
     load_class_config,
 )
-from src.data.image_io import load_image_bgr
+from src.data.utils.image_io import load_image_bgr
 from src.review.tiled_inference import make_ultralytics_predict_fn, predict_parent_image
 
 # Une couleur par ID de classe (cycle si plus de classes que de couleurs) -

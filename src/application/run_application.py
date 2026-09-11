@@ -90,7 +90,7 @@ from src.application.inventory import scan_batch
 from src.application.model_registry import load_operational_models, resolve_model_choice
 from src.application.paths import DEFAULT_PREDICTION_DIR
 from src.application.weight_estimation import estimate_weight_kg
-from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
+from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
 from src.review.tiled_inference import make_ultralytics_predict_fn, predict_parent_image
 
 # Seuil de confiance "large" pour la 1ère passe d'inférence tuilée - PAS le
