@@ -1,7 +1,7 @@
 # config/data_config_4classes.yaml
 # Variante expérimentale : 4 Super-Classes physiques
 
-path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_4classes
+path: 3. Processed dataset/4_sliced_dataset_4classes
 train: images/train
 val: images/val
 test: images/test

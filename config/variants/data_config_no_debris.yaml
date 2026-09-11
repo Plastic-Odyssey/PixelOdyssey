@@ -11,7 +11,7 @@
 # Chemin de SORTIE dédié (4_sliced_dataset_no_debris) : ne partage aucun fichier généré avec
 # le dataset principal (4_sliced_dataset). Le dataset brut source (1_annotated_dataset) reste
 # le même - seule la façon de le traduire en classes cibles change.
-path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_no_debris
+path: 3. Processed dataset/4_sliced_dataset_no_debris
 train: images/train
 val: images/val
 test : images/test

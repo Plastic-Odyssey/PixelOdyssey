@@ -13,7 +13,7 @@
 # Puis entraîner :
 #   python -m src.training.train --config config/variants/data_config_SL_mono.yaml --tag SL_mono
 
-path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_SL_mono
+path: 3. Processed dataset/4_sliced_dataset_SL_mono
 train: images/train
 val: images/val
 test : images/test

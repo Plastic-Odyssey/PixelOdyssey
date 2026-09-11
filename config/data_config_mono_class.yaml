@@ -16,7 +16,7 @@
 # Puis entraîner :
 #   python -m src.training.train --config config/data_config_mono_class.yaml --default-augment --tag mono_class_baseline
 
-path: D:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_mono_class
+path: 3. Processed dataset/4_sliced_dataset_mono_class
 train: images/train
 val: images/val
 test : images/test

@@ -24,7 +24,7 @@
 # Entraînement comparatif (même méthodologie que les runs de référence) :
 #   python -m src.training.train --config config/data_config_bg20.yaml --tag bg20_cap
 
-path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_bg20
+path: 3. Processed dataset/4_sliced_dataset_bg20
 train: images/train
 val: images/val
 test : images/test
