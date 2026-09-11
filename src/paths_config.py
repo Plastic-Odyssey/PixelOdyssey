@@ -120,3 +120,7 @@ TEST_SL_DIR = TESTS_ROOT_DIR / "2_SL"         # Split de test dédié Santa Luzi
 # vit directement sous TRAINING_RUNS_DIR/, inchangé par ailleurs (train.py continue de
 # nommer/organiser les runs exactement pareil, seule la racine change).
 TRAINING_RUNS_DIR = DATA_ROOT / "6. Model outputs" / "runs"
+
+# Dossiers de résultats d'inférence et d'assistance à l'annotation
+PREDICTION_DIR = RESULTS_DIR / "2_prediction"
+ASSISTED_ANNOTATION_DIR = RESULTS_DIR / "1_assisted_annotation"

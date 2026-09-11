@@ -72,6 +72,7 @@ Exemples (voir --help pour la liste complète des options) :
 
 import os
 import sys
+import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -87,12 +88,15 @@ from pathlib import Path
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import torch
+import yaml
 from ultralytics import YOLO
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH
 from src.training.training_report import generate_report
-from src.paths_config import TRAINING_RUNS_DIR
+from src.paths_config import DATA_ROOT, TRAINING_RUNS_DIR
+from src.review.visualize_predictions import run_visualize
+
 
 # ============================================================================
 # 1. PARAMÈTRES À AJUSTER
@@ -220,6 +224,62 @@ OUTPUT_DIR = TRAINING_RUNS_DIR
 # exclu de git via la règle `models/` du .gitignore, pas besoin de le déplacer physiquement.
 PRETRAINED_DIR = PROJECT_ROOT / "models" / "pretrained"
 
+def _resolve_split_dir(config_path: Path) -> Path:
+    """Détecte automatiquement le dossier de split (2_split_dataset*)
+
+    associé à la configuration (ex: 4_sliced_dataset_mono_class ->
+    2_split_dataset_mono_class).
+    """
+    try:
+        import yaml
+        from src.paths_config import DATA_ROOT, TRAINING_RUNS_DIR
+        
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        dataset_path = cfg.get("path")
+        if dataset_path:
+            dataset_dir = Path(dataset_path)
+            candidate_name = dataset_dir.name.replace(
+                "4_sliced_dataset", "2_split_dataset"
+            )
+            candidate_dir = dataset_dir.parent / candidate_name
+            if (candidate_dir / "parent_manifest.json").exists():
+                return candidate_dir
+    except Exception:
+        pass
+    from src.data.utils.split_dataset import SPLIT_DIR
+
+    return Path(SPLIT_DIR)
+
+def _prepare_resolved_data_config(config_path: Path, target_dir: Path) -> Path:
+    """Adapte dynamiquement le champ 'path' du YAML pour correspondre au DATA_ROOT local.
+    
+    Permet à chaque machine (disque C:, D:, E:, etc.) d'exécuter l'entraînement
+    sans modifier les fichiers YAML versionnés sous Git.
+    """
+    with open(config_path, "r", encoding="utf-8") as f:
+        config_data = yaml.safe_load(f)
+
+    raw_path_str = config_data.get("path", "")
+    
+    # Si le YAML contient un chemin absolu vers un PixelOdyssey sur un autre disque,
+    # ou un chemin relatif sous '3. Processed dataset' :
+    sub_path = "3. Processed dataset"
+    if sub_path in raw_path_str:
+        # Extrait la partie après '3. Processed dataset'
+        suffix = raw_path_str.split(sub_path)[-1].lstrip(r"\/")
+        resolved_path = DATA_ROOT / sub_path / suffix
+    else:
+        resolved_path = DATA_ROOT / raw_path_str
+
+    config_data["path"] = str(resolved_path)
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    resolved_yaml_path = target_dir / "resolved_data_config.yaml"
+    with open(resolved_yaml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(config_data, f, sort_keys=False)
+
+    return resolved_yaml_path
 
 def _resolve_device(device):
     """Retombe sur "cpu" si `device` demande un GPU CUDA (int, "0", "0,1"...) et
@@ -286,8 +346,10 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
     # plus de gestion manuelle d'URL/urllib comme dans l'ancienne version.
     model = YOLO(str(PRETRAINED_DIR / MODEL_WEIGHTS))
 
+    resolved_config = _prepare_resolved_data_config(config_path, run_dir)
+
     train_kwargs = dict(
-        data=str(config_path),
+        data=str(resolved_config),
         epochs=EPOCHS,
         imgsz=IMGSZ,
         batch=BATCH,
@@ -328,6 +390,34 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
         print("   Tu peux le regénérer plus tard sans relancer l'entraînement, avec :")
         print(f'   python -m src.training.training_report --run "{run_dir}"')
 
+    # --- 👁️ EXPORT DES VISUALISATIONS DU SPLIT TEST -------------------------
+    if not skip_viz:
+        print(
+            "\n--- 👁️ GÉNÉRATION DES IMAGES DU SPLIT TEST (Vert=Réussi, Rouge=Raté, Bleu=Faux Positif) ---"
+        )
+        best_pt = run_dir / "weights" / "best.pt"
+        if best_pt.exists():
+            try:
+                split_dir = _resolve_split_dir(config_path)
+                viz_dir = run_dir / "visualisations_test"
+
+                run_visualize(
+                    model_path=str(best_pt),
+                    scope="test",
+                    class_config_path=config_path,
+                    split_dir=str(split_dir),
+                    output_dir=str(run_dir),
+                    run_id="visualisations_test",
+                    limit=viz_limit,
+                    tile_conf_threshold=0.25,
+                    conf_threshold=0.25,
+                )
+                print(f"✅ Images annotées (.jpg) enregistrées dans : {viz_dir / 'images'}")
+                print(f"📄 Visionneuse interactive générée : {viz_dir / 'index.html'}")
+            except Exception as e:
+                print(f"⚠️ Échec lors de la génération des visualisations ({e}).")
+        else:
+            print(f"⚠️ Fichier de poids introuvable : {best_pt}")
 
 if __name__ == "__main__":
     import argparse

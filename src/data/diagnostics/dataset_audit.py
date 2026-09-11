@@ -46,14 +46,15 @@ from pathlib import Path
 from typing import Dict, List
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
-from src.data.class_config import load_batch_local_names, normalize_class_name
-from src.data.image_io import load_image_bgr
+from src.data.utils.class_config import load_batch_local_names, normalize_class_name
+from src.data.utils.image_io import load_image_bgr
 from src.data.utils.raw_dataset import collect_parent_images
 
 from shapely.geometry import Polygon
 
-RAW_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset"
-OUTPUT_CSV_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\dataset_audit_report.csv"
+from src.paths_config import PROCESSED_DATASET_DIR
+RAW_DIR_DEFAULT = PROCESSED_DATASET_DIR / "1_annotated_dataset"
+OUTPUT_CSV_DEFAULT = PROCESSED_DATASET_DIR / "dataset_audit_report.csv"
 
 # Mêmes divergences d'orthographe que class_aliases (config/data_config.yaml),
 # dupliquées ici pour que cet outil reste utilisable même si ce fichier est
