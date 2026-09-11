@@ -46,8 +46,8 @@ from pathlib import Path
 from typing import Dict, List
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
-from src.data.class_config import load_batch_local_names, normalize_class_name
-from src.data.image_io import load_image_bgr
+from src.data.utils.class_config import load_batch_local_names, normalize_class_name
+from src.data.utils.image_io import load_image_bgr
 from src.data.utils.raw_dataset import collect_parent_images
 
 from shapely.geometry import Polygon

@@ -38,7 +38,7 @@ import numpy as np
 import yaml
 from shapely.geometry import MultiPolygon, Polygon, box
 
-from src.data.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
+from src.data.utils.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
 from src.review.split_for_cvat import CVAT_MAX_PIXELS
 
 # Ratio d'aire minimal conservé pour un fragment de polygone recadré au bord

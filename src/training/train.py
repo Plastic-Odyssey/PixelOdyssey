@@ -169,8 +169,8 @@ OVERLAP_MASK = False
 # hsv_h/hsv_s/hsv_v (teinte/saturation/luminosité), erasing : laissés aux défauts Ultralytics, jamais
 # évalués séparément à ce jour.
 #
-# mosaic (défaut Ultralytics 1.0, close_mosaic=10) : actif à son maximum sur tous les runs du projet,
-# jamais désactivé ni testé comme variable.
+# mosaic (défaut Ultralytics 1.0, close_mosaic=1)
+mosaic = 0 
 
 # --- Étiquette libre pour retrouver ce run dans TRAINING_RUNS_DIR ----------
 # Sert uniquement à la lisibilité du nom de dossier - mets ce que tu veux,

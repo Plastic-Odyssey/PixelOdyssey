@@ -79,7 +79,7 @@ from typing import Dict, List, Optional, Union
 import yaml
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.class_config import (
+from src.data.utils.class_config import (
     DEFAULT_CLASS_CONFIG_PATH,
     EXCLUDE,
     assert_model_matches_taxonomy,
@@ -88,8 +88,8 @@ from src.data.class_config import (
     pick_placeholder_local_id,
     resolve_class_name,
 )
-from src.data.image_io import load_image_bgr
-from src.data.split_dataset import PARENT_MANIFEST_FILENAME, RAW_DIR, SPLIT_DIR
+from src.data.utils.image_io import load_image_bgr
+from src.data.utils.split_dataset import PARENT_MANIFEST_FILENAME, RAW_DIR, SPLIT_DIR
 from src.review.matching import LabeledPolygon, match_gt_to_predictions
 from src.review.tiled_inference import make_ultralytics_predict_fn, predict_parent_image
 

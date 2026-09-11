@@ -101,9 +101,9 @@ import yaml
 from shapely.geometry import MultiPolygon, Polygon, box
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
-from src.data.image_io import load_image_bgr
-from src.data.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
+from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
+from src.data.utils.image_io import load_image_bgr
+from src.data.utils.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
 from src.review.label_review import RUNS_DIR, _discover_available_models, _prompt_model_choice
 from src.review.matching import LabeledPolygon
 from src.review.split_for_cvat import CVAT_MAX_PIXELS

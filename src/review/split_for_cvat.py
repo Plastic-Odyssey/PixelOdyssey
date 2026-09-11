@@ -52,8 +52,8 @@ from typing import List, Optional
 import cv2
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from src.data.image_io import load_image_bgr
-from src.data.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
+from src.data.utils.image_io import load_image_bgr
+from src.data.utils.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
 
 # Limite d'import CVAT (constatée empiriquement, pas documentée officiellement) :
 # une image de plus de ~50 millions de pixels est refusée à l'import.
