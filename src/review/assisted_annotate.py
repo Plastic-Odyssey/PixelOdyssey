@@ -58,7 +58,8 @@ Fonctionnement :
        leur nombre total, pas de la forme de grille choisie pour ce nombre
        (voir tiling_geometry.min_pieces_for_pixel_cap).
 
-RESULTS_DIR (E:\\PixelOdyssey\\4. Results\\1_assisted_annotation) plutôt que
+RESULTS_DIR (4. Results/1_assisted_annotation sous la racine de données,
+voir src/paths_config.py) plutôt que
 1_annotated_dataset directement : ce lot est une PROPOSITION issue du
 modèle + revue manuelle, pas encore une vérité terrain définitive au même
 titre que les lots annotés from scratch - le format de sortie reste
@@ -104,6 +105,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy, load_class_config
 from src.data.image_io import load_image_bgr
 from src.data.tiling_geometry import iter_grid_windows, min_pieces_for_pixel_cap, most_square_grid
+from src.paths_config import ASSISTED_ANNOTATION_DIR
 from src.review.label_review import RUNS_DIR, _discover_available_models, _prompt_model_choice
 from src.review.matching import LabeledPolygon
 from src.review.split_for_cvat import CVAT_MAX_PIXELS
@@ -116,7 +118,9 @@ OUTLINE_COLOR_BGR = (0, 235, 255)  # jaune vif (cohérent avec geo_density_map.p
 # Dossier de sortie des lots produits par cet outil - voir le raisonnement
 # dans la docstring du module (staging avant CVAT/promotion vers
 # 1_annotated_dataset, pas écrit directement dans le dataset d'entraînement).
-RESULTS_DIR = r"E:\PixelOdyssey\4. Results\1_assisted_annotation"
+# Dérivé de RESULTS_DIR (src/paths_config.py), seule source de vérité pour
+# la racine du disque de données - plus de chemin en dur ici.
+RESULTS_DIR = str(ASSISTED_ANNOTATION_DIR)
 
 # Ratio d'aire minimal conservé pour un fragment d'annotation recadré au bord
 # d'un morceau de grille (--n-pieces > 1) - même valeur par défaut et même

@@ -607,7 +607,7 @@ def generate_report(
     import yaml
     from ultralytics import YOLO  # import tardif : évite de charger torch si le module est juste inspecté
 
-    from src.data.class_config import assert_model_matches_taxonomy
+    from src.data.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy
 
     run_dir = Path(run_dir)
     weights_path = run_dir / "weights" / weights_name
@@ -616,8 +616,9 @@ def generate_report(
 
     if data_config_path is None:
         # À défaut d'indication explicite, on retombe sur la config par défaut
-        # du projet (cohérent avec train.py).
-        data_config_path = Path(__file__).resolve().parent.parent.parent / "config" / "data_config.yaml"
+        # du projet (cohérent avec train.py) - dérivée de class_config.py
+        # (seule source de vérité pour ce chemin), jamais recalculée ici.
+        data_config_path = DEFAULT_CLASS_CONFIG_PATH
 
     model = YOLO(str(weights_path))
 

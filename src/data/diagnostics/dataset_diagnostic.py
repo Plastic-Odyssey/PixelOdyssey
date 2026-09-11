@@ -116,11 +116,14 @@ from src.data.utils.class_config import (
     normalize_class_name,
     resolve_class_name,
 )
-from src.data.utils.raw_dataset import collect_parent_images
+from src.data.raw_dataset import collect_parent_images
+from src.paths_config import ANNOTATED_DATASET_DIR, PROCESSED_DATASET_DIR, SPLIT_DATASET_DIR
 
-RAW_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset"
-OUTPUT_XLSX_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\dataset_diagnostic.xlsx"
-SPLIT_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\2_split_dataset"
+# Dérivés de paths_config.py (seule source de vérité pour la racine du
+# disque de données) plutôt que redéfinis en dur ici.
+RAW_DIR_DEFAULT = str(ANNOTATED_DATASET_DIR)
+OUTPUT_XLSX_DEFAULT = str(PROCESSED_DATASET_DIR / "dataset_diagnostic.xlsx")
+SPLIT_DIR_DEFAULT = str(SPLIT_DATASET_DIR)
 PARENT_MANIFEST_FILENAME = ".parent_manifest.json"  # même nom que split_dataset.py
 GSD_FIXE_CM_PAR_PX_DEFAULT = 0.6  # hypothèse unique, voir docstring du module
 

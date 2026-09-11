@@ -52,8 +52,10 @@ from src.data.utils.raw_dataset import collect_parent_images
 
 from shapely.geometry import Polygon
 
-RAW_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset"
-OUTPUT_CSV_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\dataset_audit_report.csv"
+# Dérivés de paths_config.py (seule source de vérité pour la racine du
+# disque de données) plutôt que redéfinis en dur ici.
+RAW_DIR_DEFAULT = str(ANNOTATED_DATASET_DIR)
+OUTPUT_CSV_DEFAULT = str(PROCESSED_DATASET_DIR / "dataset_audit_report.csv")
 
 # Mêmes divergences d'orthographe que class_aliases (config/data_config.yaml),
 # dupliquées ici pour que cet outil reste utilisable même si ce fichier est
