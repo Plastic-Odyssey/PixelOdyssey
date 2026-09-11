@@ -79,9 +79,7 @@ from src.data.utils.slice_dataset import SLICED_DIR, run_slice
 from src.data.utils.split_dataset import RAW_DIR, SPLIT_DIR, run_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-# Dérivé de class_config.py (seule source de vérité pour ce chemin) plutôt
-# que recalculé ici à partir de PROJECT_ROOT.
-CONFIG_PATH = DEFAULT_CLASS_CONFIG_PATH
+CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
 
 
 def _validate_config_suffix_pairing(

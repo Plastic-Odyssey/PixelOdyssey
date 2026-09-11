@@ -46,10 +46,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 sys.path.append(str(Path(__file__).resolve().parents[3]))
-from src.data.utils.augment_dataset import AUGMENTED_DIR
+from src.data.augment_dataset import AUGMENTED_DIR
 from src.data.utils.raw_dataset import VALID_IMG_EXTS
-from src.data.utils.slice_dataset import SLICED_DIR, SPLITS
-from src.data.utils.slicer import PlasticImageSlicer
+from src.data.slice_dataset import SLICED_DIR, SPLITS
+from src.data.slicer import PlasticImageSlicer
 
 _WINDOW_SUFFIX_RE = re.compile(r"^\d+_\d+$")
 
