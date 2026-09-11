@@ -1,0 +1,144 @@
+# PixelOdyssey - Configuration du Dataset pour YOLOv11-seg
+#
+# VARIANTE SITE (07/09/2026) : copie de data_config.yaml, SEUL `path:` diffère (pointe
+# vers 4_sliced_dataset_SL au lieu de 4_sliced_dataset) - même taxonomie multiclasse
+# 7-classes que le dataset complet, entraînement dédié au site Santa Luzia. Généré via :
+#   python src/data/data_pipeline.py --site SL --suffix _SL
+# Voir data_pipeline.py ("Variante de site") et le journal du 07/09/2026.
+
+# Chemins d'accès racine et dossiers de split.
+# 4_sliced_dataset = sortie de l'étape 4 (src/data/slice_dataset.py), les imagettes 640x640
+# prêtes pour YOLO. Généré en lançant tout le pipeline en une fois avec
+# `python src/data/data_pipeline.py` (orchestrateur qui enchaîne vérification -> split ->
+# augmentation -> slicing).
+path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_SL
+train: images/train
+val: images/val
+test : images/test
+
+# ============================================================================
+# TAXONOMIE CIBLE : les super-classes apprises par le modèle. Regroupement
+# par FORME plutôt que par matière/rigidité : une classe dédiée a une forme
+# suffisamment récurrente et assez d'exemples pour être apprise séparément ;
+# sinon elle rejoint Debris_Divers (fourre-tout).
+# ============================================================================
+names:
+  0: Bouteille
+  1: Flipflops
+  2: Cagette
+  3: Bouee
+  4: Cordage_Filet
+  5: Bidon
+  6: Debris_Divers
+
+# ============================================================================
+# RÉFÉRENTIEL UNIQUE DE CLASSES — source de vérité pour tout le projet.
+#
+# Chaque lot garde son PROPRE data.yaml local tel quel (peu importe combien
+# de classes il déclare, dans quel ordre, avec quels IDs). Pour traduire un
+# label, on lit le nom de la classe via ce data.yaml local (voir
+# class_config.load_batch_local_names), on le normalise (casse/accents/
+# underscores - voir class_config.normalize_class_name), puis on le cherche
+# ci-dessous dans `class_taxonomy`.
+#
+# class_taxonomy : dict {nom de classe: ID de super-classe cible, ou "exclude"}.
+#   La clé est écrite avec l'orthographe "de référence" (peu importe laquelle
+#   tant qu'elle est dans class_taxonomy - les autres orthographes vues dans
+#   d'autres lots vont dans class_aliases ci-dessous). La normalisation gère
+#   déjà casse/accents/underscores automatiquement : PAS besoin de lister
+#   "Bouées" ET "bouees" séparément ici, une seule des deux suffit.
+# class_aliases : dict {autre orthographe: nom de référence déjà dans
+#   class_taxonomy} - UNIQUEMENT pour les vraies divergences que la
+#   normalisation ne résout pas (fautes de frappe, singulier/pluriel - ex:
+#   "flipflops"/"fliflops" chez SB vs SL, une lettre différente).
+#
+# ONBOARDING D'UNE NOUVELLE CLASSE (ex: un futur lot exporte un nom encore
+# jamais vu) : il suffit d'ajouter une entrée à class_taxonomy (ou, si le nom
+# est juste une variante d'orthographe d'une classe déjà connue, à
+# class_aliases). AUCUN CODE À TOUCHER. Et si un nom réellement utilisé dans
+# un label n'apparaît (même après normalisation/alias) dans aucune entrée,
+# ce n'est jamais silencieusement ignoré : raw_dataset_checker.py (étape 0)
+# bloque le pipeline en disant lequel, et class_config.py émet le même genre
+# d'avertissement à tout endroit qui charge ce fichier.
+# ============================================================================
+
+class_taxonomy:
+  # -> 0: Bouteille (forme col + corps très reconnaissable)
+  "bouteille PET": 0
+  "Bouteille Plastique rigide": 0
+
+  # -> 1: Flipflops (mousse EVA, silhouette de tong très reconnaissable)
+  "fliflops": 1             # voir class_aliases pour "flipflops" (lot SB)
+
+  # -> 2: Cagette (grille/caisse, forme récurrente malgré une taille variable)
+  "cagette": 2
+
+  # -> 3: Bouee (bouees + flotteurs regroupés : formes individuellement
+  # cohérentes mais trop peu d'exemples séparément pour tenir seules)
+  "Bouées": 3
+  "Bouées pieuvre": 3       # classe fantôme (jamais observée), placée par précaution
+  "flotteurs": 3
+
+  # -> 4: Cordage_Filet (fils, bout, filet de pêche)
+  "Cordage": 4
+
+  # -> 5: Bidon (Petit bidon - forme assez cohérente mais peu d'exemples -
+  # à surveiller si le rappel de cette classe reste faible, faute de données)
+  "Petit bidon": 5
+  "Sceau": 5
+
+  # -> 6: Debris_Divers (fourre-tout : formes non récurrentes ou pas assez
+  # d'exemples pour être apprises séparément - fragments, mousses, sacs,
+  # textiles, polystyrène, Bouchon, et les classes quasi-fantômes
+  # Sceau/casques). Inconnu volontairement PAS mappé ici - voir "exclue"
+  # ci-dessous.
+  "Plastique souple (sac)": 6
+  "Mousse expansée": 6
+  "Polystyrene": 6
+  "Fragments plastique rigide": 6
+  "Tissu": 6
+  "casques": 6                # classe fantôme (jamais observée), placée par précaution
+  "bouchons": 6
+
+  # -> exclue (matière confirmée non-plastique, classe pas encore assumée, ou
+  # label jugé trop hétérogène pour être mappé vers une super-classe)
+  "Morceaux de bois": exclude
+  "Verre": exclude
+  "à déterminer": exclude  # sémantiquement proche d'"Inconnu" mais pas encore confirmée
+                            # équivalente - à trancher explicitement plus tard
+  "Inconnu": exclude       # ré-exclu le 26/08/2026 : le run ablation_no_copy_paste_
+                            # yolo11n-seg_20260826_232932 a montré que sa fusion dans
+                            # Debris_Divers (tentée plus tôt le même jour) faisait de
+                            # cette classe un aimant à confusion (56% des vrais Bouee
+                            # prédits Debris_Divers, 70% des fausses alertes sur fond
+                            # étiquetées Debris_Divers) - voir journal pour le détail
+
+  # Auto-mapping des super-classes VERS ELLES-MÊMES : nécessaire pour
+  # src/review/bootstrap_annotate.py (validation d'un nouveau lot "cold
+  # start" à partir des prédictions du modèle - voir sa docstring). Ce lot
+  # n'a, par construction, AUCUNE taxonomie fine existante (contrairement à
+  # SB/SL/A LEG, ~20 sous-classes chacun) - son propre data.yaml local
+  # déclare donc directement les super-classes comme classes locales, plutôt
+  # que d'inventer un niveau de sous-classe qui n'existerait que pour ce lot.
+  # Ces entrées permettent à ce nom de se résoudre vers lui-même
+  # (raw_dataset_checker.py bloquerait sinon ce lot, "Bouteille" par exemple
+  # n'apparaissant sinon dans aucune entrée de class_taxonomy - seules les
+  # sous-classes fines comme "bouteille PET" y sont). Sans effet sur les
+  # autres lots.
+  "Bouteille": 0
+  "Flipflops": 1
+  "Cagette": 2
+  "Bouee": 3
+  "Cordage_Filet": 4
+  "Bidon": 5
+  "Debris_Divers": 6
+
+# Vraies divergences d'orthographe entre lots (au-delà de casse/accents/underscores,
+# déjà gérés par la normalisation automatique - voir class_config.normalize_class_name).
+class_aliases:
+  "flipflops": "fliflops"                                    # SB - faute de frappe vs SL ("fliflops")
+  "bouteilles_pet": "bouteille PET"                           # SB - pluriel vs SL (singulier)
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide" # SB - pluriel vs SL (singulier)
+  # (les autres noms SB - cagette, bouchons, casques, cordage, bouees, inconnu -
+  # correspondent déjà à une entrée de class_taxonomy après normalisation seule,
+  # aucun alias n'est nécessaire pour eux.)

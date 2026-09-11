@@ -1,0 +1,71 @@
+# config/data_config_4classes.yaml
+# Variante expérimentale : 4 Super-Classes physiques
+
+path: E:\PixelOdyssey\3. Processed dataset\4_sliced_dataset_4classes
+train: images/train
+val: images/val
+test: images/test
+
+# ----------------------------------------------------------------------------
+# TAXONOMIE CIBLE (4 Super-Classes)
+# ----------------------------------------------------------------------------
+names:
+  0: Mousse_Fragments_Souple
+  1: Plastique_Rigide
+  2: Cordage_Filet
+  3: NonPlastique
+
+# ----------------------------------------------------------------------------
+# RÉFÉRENTIEL DE CORRESPONDANCE
+# ----------------------------------------------------------------------------
+class_taxonomy:
+  # -> 0: Mousse_Fragments_Souple (matériaux légers, expansés ou déchiquetés)
+  "Plastique souple (sac)": 0
+  "Mousse expansée": 0
+  "Polystyrene": 0
+  "Fragments plastique rigide": 0
+  "Tissu": 0
+
+  # -> 1: Plastique_Rigide (formes géométriques creuses ou compactes)
+  "bouteille PET": 1
+  "Bouteille Plastique rigide": 1
+  "fliflops": 1
+  "cagette": 1
+  "Bouées": 1
+  "Bouées pieuvre": 1
+  "flotteurs": 1
+  "Petit bidon": 1
+  "Sceau": 1
+  "bouchons": 1
+  "casques": 1
+
+  # -> 2: Cordage_Filet (éléments filiformes / tressés)
+  "Cordage": 2
+
+  # -> 3: NonPlastique (bois flotté, verre, minéraux)
+  "Morceaux de bois": 3
+  "Verre": 3
+
+  # -> Exclusions (labels trop ambigus qui parasitent les gradients)
+  "Inconnu": exclude
+  "à déterminer": exclude
+
+  # Auto-mapping direct des 4 super-classes vers elles-mêmes (sécurité bootstrap)
+  "Mousse_Fragments_Souple": 0
+  "Plastique_Rigide": 1
+  "Cordage_Filet": 2
+  "NonPlastique": 3
+
+  # Compatibilité ascendante : si un lot intermédiaire a été étiqueté avec les 7 classes
+  "Bouteille": 1
+  "Flipflops": 1
+  "Cagette": 1
+  "Bouee": 1
+  "Bidon": 1
+  "Debris_Divers": 0
+
+# Alias orthographiques
+class_aliases:
+  "flipflops": "fliflops"
+  "bouteilles_pet": "bouteille PET"
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide"
