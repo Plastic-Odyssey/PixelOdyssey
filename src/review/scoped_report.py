@@ -64,9 +64,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 import yaml
 
 from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH, load_class_config
-from src.data.utils.raw_dataset import VALID_IMG_EXTS
+from src.data.utils.raw_dataset import VALID_IMG_EXTS, site_of_batch
 from src.data.utils.slice_dataset import SLICED_DIR
 from src.data.utils.split_dataset import PARENT_MANIFEST_FILENAME, SPLIT_DIR
+from src.paths_config import resolve_data_config_path_field
 from src.review.assisted_annotate import LOW_SAMPLE_WARN_THRESHOLD
 from src.review.visualize_annotations import _parse_yolo_seg_label
 from src.training.training_report import generate_report
@@ -89,7 +90,19 @@ def _load_parent_manifest(split_dir: str) -> Dict[str, Dict]:
         return json.load(f)
 
 
-def _matching_parent_ids(parent_manifest: Dict[str, Dict], split: str, batch_filter: str) -> List[str]:
+def _matching_parent_ids(
+    parent_manifest: Dict[str, Dict], split: str, batch_filter: str, site_code: Optional[str] = None,
+) -> List[str]:
+    """`site_code` (23/09/2026) : correspondance EXACTE sur le code de site
+    (raw_dataset.site_of_batch - "SL", "SB", "A"...), prioritaire sur `batch_filter`.
+    `batch_filter` reste une sous-chaîne insensible à la casse (usage CLI historique),
+    mais c'est un filtre fragile pour un SITE : "A" -> "a" correspond à tout lot dont le
+    nom contient la lettre a (un futur "L Loango" serait compté dans Aldabra)."""
+    if site_code:
+        return sorted(
+            pid for pid, info in parent_manifest.items()
+            if info["split"] == split and site_of_batch(info["batch"]) == site_code
+        )
     needle = batch_filter.lower()
     return sorted(
         pid for pid, info in parent_manifest.items()
@@ -124,6 +137,12 @@ def _write_image_list(tiles: List[Path], out_path: Path) -> None:
 def _write_scoped_data_yaml(base_data_config: Path, split: str, image_list_path: Path, out_yaml_path: Path) -> None:
     with open(base_data_config, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
+    # 'path' résolu en absolu (ancré DATA_ROOT) AVANT d'écrire le yaml scopé - sinon
+    # Ultralytics résout le 'path' relatif (versionné sous Git, portable par
+    # construction) contre SON PROPRE réglage global `datasets_dir` plutôt que
+    # DATA_ROOT, et ne trouve aucune image ("images not found") - constaté le
+    # 11/09/2026, voir la docstring de resolve_data_config_path_field.
+    data = resolve_data_config_path_field(data)
     data[split] = str(image_list_path.resolve())
     with open(out_yaml_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
@@ -157,8 +176,10 @@ def run_scoped_report(
     sliced_dir: str = SLICED_DIR,
     split_dir: str = SPLIT_DIR,
     weights_name: str = "best.pt",
+    site_code: Optional[str] = None,
 ) -> Path:
-    """Voir la docstring du module. Retourne le chemin du rapport HTML scopé écrit."""
+    """Voir la docstring du module. Retourne le chemin du rapport HTML scopé écrit.
+    `site_code` : filtre exact par code de site (voir _matching_parent_ids)."""
     run_dir = Path(run_dir)
     label = _sanitize_label(label if label else batch_filter)
     data_config_path = Path(data_config_path) if data_config_path else DEFAULT_DATA_CONFIG_PATH
@@ -166,7 +187,7 @@ def run_scoped_report(
     print(f"--- 🔎 RAPPORT SCOPÉ : lot(s) contenant '{batch_filter}', split '{split}' ---")
 
     parent_manifest = _load_parent_manifest(split_dir)
-    parent_ids = _matching_parent_ids(parent_manifest, split, batch_filter)
+    parent_ids = _matching_parent_ids(parent_manifest, split, batch_filter, site_code=site_code)
     if not parent_ids:
         raise RuntimeError(
             f"Aucune image parente du split '{split}' ne correspond au filtre '{batch_filter}'. "
@@ -185,7 +206,12 @@ def run_scoped_report(
         raise RuntimeError("Aucune imagette trouvée pour les images parentes sélectionnées - rien à évaluer.")
     print(f"    {len(all_tiles)} imagette(s) au total pour l'évaluation.")
 
-    _, target_names = load_class_config(DEFAULT_CLASS_CONFIG_PATH)
+    # Taxonomie de CE data_config (pas DEFAULT_CLASS_CONFIG_PATH en dur) - sinon un
+    # modèle mono-classe affiche sa composition de sous-ensemble avec les noms du
+    # référentiel 7-classes (ex: tout comptabilisé sous "Bouteille" au lieu de
+    # "Dechet_Plastique") : trompeur, purement cosmétique mais source de confusion
+    # constatée le 11/09/2026.
+    _, target_names = load_class_config(data_config_path)
     _print_subset_stats(sliced_dir, split, all_tiles, target_names)
 
     scope_dir = run_dir / f".scoped_report_{label}"

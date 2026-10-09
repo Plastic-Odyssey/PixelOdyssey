@@ -7,7 +7,10 @@
 #
 # Générer le dataset tuilé correspondant :
 #   python src/data/data_pipeline.py --config config/data_config_mono_class.yaml \
-#       --site A --suffix _A_mono --balance-by items
+#       --site A --suffix _A_mono
+#   (corrigé le 23/09/2026 : cette ligne recommandait --balance-by items. Le mode images par
+#   défaut donne à ce site EXACTEMENT la même répartition que le dataset complet - condition
+#   pour que evaluation_matrix.py ne trouve aucune fuite - voir split_dataset.py.)
 # Puis entraîner :
 #   python -m src.training.train --config config/variants/data_config_A_mono.yaml --tag A_mono
 

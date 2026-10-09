@@ -101,6 +101,47 @@ def _resolve_data_root() -> Path:
 
 DATA_ROOT = _resolve_data_root()
 
+
+def resolve_data_config_path_field(config_data: dict) -> dict:
+    """Retourne une COPIE de `config_data` (dict déjà chargé depuis un
+    data_config*.yaml) avec son champ 'path' réécrit en ABSOLU, ancré sur
+    DATA_ROOT (le disque détecté SUR CETTE MACHINE) - quel que soit le
+    chemin enregistré dans le YAML versionné sous Git (relatif par
+    construction, voir l'en-tête de ce module : "Permet à chaque machine
+    d'exécuter l'entraînement sans modifier les fichiers YAML versionnés").
+
+    Pourquoi indispensable avant de transmettre un data_config à Ultralytics
+    (`YOLO(...).train()` ou `.val()`) : si 'path' est relatif, Ultralytics le
+    résout contre SON PROPRE réglage global `datasets_dir`
+    (AppData/Roaming/Ultralytics/settings.json sous Windows) - qui n'a AUCUNE
+    raison de coïncider avec DATA_ROOT - plutôt que d'échouer bruyamment.
+    Constaté le 11/09/2026 : `src.review.scoped_report` transmettait le
+    data_config tel quel (sans ce traitement), et Ultralytics allait chercher
+    les images sous "<datasets_dir Ultralytics>/3. Processed dataset/..." au
+    lieu de "<DATA_ROOT>/3. Processed dataset/..." - échec silencieux
+    ("images not found") sans rapport avec le modèle ou la donnée eux-mêmes.
+    `train.py` s'en tirait déjà correctement (voir _prepare_resolved_data_config,
+    qui appelle CETTE MÊME fonction) ; `training_report.generate_report` et
+    `scoped_report._write_scoped_data_yaml` font maintenant pareil.
+
+    Ne modifie jamais `config_data` en place (copie superficielle) - l'appelant
+    reste libre de réutiliser le dict original pour autre chose (ex: lire
+    `names`/`class_taxonomy` avant résolution du chemin)."""
+    config_data = dict(config_data)
+    raw_path_str = str(config_data.get("path", ""))
+    sub_path = "3. Processed dataset"
+    if sub_path in raw_path_str:
+        # Chemin déjà enraciné sous "3. Processed dataset" (portable ou absolu
+        # d'un AUTRE disque/machine) : ne garde que ce qui suit ce repère, pour
+        # ne jamais dupliquer/mélanger un préfixe d'un autre DATA_ROOT.
+        suffix = raw_path_str.split(sub_path)[-1].lstrip(r"\/")
+        resolved_path = DATA_ROOT / sub_path / suffix
+    else:
+        resolved_path = DATA_ROOT / raw_path_str
+    config_data["path"] = str(resolved_path)
+    return config_data
+
+
 # Données traitées et résultats (rétrocompatibilité stricte avec le code existant)
 PROCESSED_DATASET_DIR = DATA_ROOT / "3. Processed dataset"
 RESULTS_DIR = DATA_ROOT / "4. Results"

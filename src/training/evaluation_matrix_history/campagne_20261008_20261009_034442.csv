@@ -1,0 +1,33 @@
+campagne,taxonomie,entrainement,run,evaluation,f1,ci_lo,ci_hi,p,r,ap50,f1_max,n_objets,n_images,fuite
+campagne_20261008,multi,Full,campagne_20261008_full_multi_yolo11n-seg_20261008_195237,Full,0.383,0.315,0.4248,0.4676,0.3466,0.3271,0.4393,1049,82,0
+campagne_20261008,multi,Full,campagne_20261008_full_multi_yolo11n-seg_20261008_195237,Santa Luzia,0.3467,0.285,0.3978,0.447,0.2993,0.2955,0.4105,857,6,0
+campagne_20261008,multi,Full,campagne_20261008_full_multi_yolo11n-seg_20261008_195237,Saint Brandon,0.1425,0.085,0.2773,0.1232,0.1898,0.137,0.2044,47,74,0
+campagne_20261008,multi,Full,campagne_20261008_full_multi_yolo11n-seg_20261008_195237,Aldabra,0.2952,0.2952,0.4375,0.3996,0.285,0.2875,0.3753,145,2,0
+campagne_20261008,multi,Santa Luzia,campagne_20261008_SL_multi_yolo11n-seg_20261009_010307,Full,0.2535,0.162,0.3108,0.3655,0.2554,0.1962,0.2827,1049,82,0
+campagne_20261008,multi,Santa Luzia,campagne_20261008_SL_multi_yolo11n-seg_20261009_010307,Santa Luzia,0.3461,0.26,0.3732,0.4851,0.2989,0.2708,0.3795,857,6,0
+campagne_20261008,multi,Santa Luzia,campagne_20261008_SL_multi_yolo11n-seg_20261009_010307,Saint Brandon,0.035,0.0132,0.0826,0.03,0.0564,0.03,0.051,47,74,0
+campagne_20261008,multi,Santa Luzia,campagne_20261008_SL_multi_yolo11n-seg_20261009_010307,Aldabra,0.0472,0.0472,0.1011,0.0945,0.06,0.0446,0.0932,145,2,0
+campagne_20261008,multi,Aldabra,campagne_20261008_A_multi_yolo11n-seg_20261009_024337,Full,0.0763,0.0392,0.1666,0.0723,0.1766,0.0701,0.1299,1049,82,0
+campagne_20261008,multi,Aldabra,campagne_20261008_A_multi_yolo11n-seg_20261009_024337,Santa Luzia,0.0429,0.0275,0.1061,0.0437,0.157,0.0401,0.0848,857,6,0
+campagne_20261008,multi,Aldabra,campagne_20261008_A_multi_yolo11n-seg_20261009_024337,Saint Brandon,0.0913,0.0552,0.1737,0.0761,0.138,0.0754,0.1599,47,74,0
+campagne_20261008,multi,Aldabra,campagne_20261008_A_multi_yolo11n-seg_20261009_024337,Aldabra,0.2876,0.2876,0.366,0.3142,0.3146,0.2766,0.3706,145,2,0
+campagne_20261008,multi,Saint Brandon,campagne_20261008_SB_multi_yolo11n-seg_20261009_030945,Full,0.0383,0.0171,0.0903,0.11,0.0272,0.0191,0.0607,1049,82,0
+campagne_20261008,multi,Saint Brandon,campagne_20261008_SB_multi_yolo11n-seg_20261009_030945,Santa Luzia,0.025,0.0025,0.0867,0.0879,0.0174,0.0129,0.0495,857,6,0
+campagne_20261008,multi,Saint Brandon,campagne_20261008_SB_multi_yolo11n-seg_20261009_030945,Saint Brandon,0.1497,0.0979,0.281,0.135,0.1696,0.1312,0.2119,47,74,0
+campagne_20261008,multi,Saint Brandon,campagne_20261008_SB_multi_yolo11n-seg_20261009_030945,Aldabra,0.0368,0.0298,0.0789,0.2889,0.0202,0.0465,0.0975,145,2,0
+campagne_20261008,mono,Full,campagne_20261008_full_mono_yolo11n-seg_20261008_211021,Full,0.5453,0.4609,0.577,0.5922,0.5052,0.4763,0.5503,1049,82,0
+campagne_20261008,mono,Full,campagne_20261008_full_mono_yolo11n-seg_20261008_211021,Santa Luzia,0.5705,0.5036,0.5897,0.6074,0.5379,0.5085,0.5773,857,6,0
+campagne_20261008,mono,Full,campagne_20261008_full_mono_yolo11n-seg_20261008_211021,Saint Brandon,0.3925,0.2619,0.5,0.35,0.4468,0.263,0.4211,47,74,0
+campagne_20261008,mono,Full,campagne_20261008_full_mono_yolo11n-seg_20261008_211021,Aldabra,0.4344,0.4052,0.5,0.6316,0.331,0.3876,0.484,145,2,0
+campagne_20261008,mono,Santa Luzia,campagne_20261008_SL_mono_yolo11n-seg_20261009_014610,Full,0.3732,0.176,0.4997,0.2936,0.5119,0.3532,0.4197,1049,82,0
+campagne_20261008,mono,Santa Luzia,campagne_20261008_SL_mono_yolo11n-seg_20261009_014610,Santa Luzia,0.5632,0.4838,0.5915,0.5814,0.5461,0.5046,0.5682,857,6,0
+campagne_20261008,mono,Santa Luzia,campagne_20261008_SL_mono_yolo11n-seg_20261009_014610,Saint Brandon,0.0659,0.0385,0.104,0.0357,0.4255,0.0646,0.1798,47,74,0
+campagne_20261008,mono,Santa Luzia,campagne_20261008_SL_mono_yolo11n-seg_20261009_014610,Aldabra,0.1609,0.0918,0.2857,0.1056,0.3379,0.0904,0.2119,145,2,0
+campagne_20261008,mono,Aldabra,campagne_20261008_A_mono_yolo11n-seg_20261009_025536,Full,0.2675,0.21,0.4139,0.2464,0.2927,0.1601,0.2769,1049,82,0
+campagne_20261008,mono,Aldabra,campagne_20261008_A_mono_yolo11n-seg_20261009_025536,Santa Luzia,0.2347,0.1887,0.3808,0.2223,0.2485,0.1253,0.2415,857,6,0
+campagne_20261008,mono,Aldabra,campagne_20261008_A_mono_yolo11n-seg_20261009_025536,Saint Brandon,0.201,0.128,0.2767,0.1296,0.4468,0.1974,0.2973,47,74,0
+campagne_20261008,mono,Aldabra,campagne_20261008_A_mono_yolo11n-seg_20261009_025536,Aldabra,0.5387,0.4598,0.5761,0.5794,0.5034,0.4599,0.5448,145,2,0
+campagne_20261008,mono,Saint Brandon,campagne_20261008_SB_mono_yolo11n-seg_20261009_032822,Full,0.0808,0.0377,0.1984,0.5111,0.0439,0.0696,0.1844,1049,82,0
+campagne_20261008,mono,Saint Brandon,campagne_20261008_SB_mono_yolo11n-seg_20261009_032822,Santa Luzia,0.0514,0.0228,0.1512,0.6053,0.0268,0.0676,0.1765,857,6,0
+campagne_20261008,mono,Saint Brandon,campagne_20261008_SB_mono_yolo11n-seg_20261009_032822,Saint Brandon,0.2785,0.1396,0.3944,0.3438,0.234,0.196,0.3023,47,74,0
+campagne_20261008,mono,Saint Brandon,campagne_20261008_SB_mono_yolo11n-seg_20261009_032822,Aldabra,0.1455,0.1094,0.2703,0.6,0.0828,0.0994,0.2266,145,2,0

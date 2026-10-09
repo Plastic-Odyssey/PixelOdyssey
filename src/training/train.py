@@ -21,10 +21,15 @@ choisi et d'un horodatage à la seconde (voir `_build_run_name`) :
 
     E:\PixelOdyssey\6. Model outputs\runs\<RUN_TAG>_<modèle>_<AAAAMMJJ_HHMMSS>\
 
-`exist_ok=False` est passé à `model.train()` comme garde-fou supplémentaire :
-si jamais deux runs partageaient malgré tout le même nom (cas extrême : deux
-lancements dans la même seconde), Ultralytics lèvera une erreur au lieu
-d'écraser silencieusement les résultats précédents.
+Garde-fou anti-écrasement (depuis le 23/09/2026, voir `launch_training`) : `run_dir`
+est vérifié juste avant `model.train()` - s'il contient autre chose que le
+`resolved_data_config.yaml` qu'on vient d'y écrire (donc un VRAI run antérieur au
+même nom, cas extrême de deux lancements dans la même seconde), une RuntimeError
+est levée plutôt que d'écraser silencieusement les résultats précédents.
+(`exist_ok=True` est passé à `model.train()` : `run_dir` existe toujours déjà à ce
+stade, pré-créé pour y écrire `resolved_data_config.yaml` - `exist_ok=False`
+faisait dévier tous les vrais résultats vers "<run_name>2" à chaque run, bug
+constaté le 23/09/2026.)
 
 Rapport de lecture
 -------------------
@@ -75,6 +80,7 @@ import sys
 import yaml
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 # Doit être fait AVANT tout import de torch/ultralytics (l'initialisation du
 # runtime OpenMP a lieu à l'import) : évite "OMP: Error #15 - libiomp5md.dll
@@ -93,8 +99,8 @@ from ultralytics import YOLO
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH
-from src.training.training_report import generate_report
-from src.paths_config import DATA_ROOT, TRAINING_RUNS_DIR
+from src.training.training_report import generate_report, resolve_run_class_config_path
+from src.paths_config import DATA_ROOT, TRAINING_RUNS_DIR, resolve_data_config_path_field
 from src.review.visualize_predictions import run_visualize
 
 
@@ -124,10 +130,14 @@ from src.review.visualize_predictions import run_visualize
 MODEL_WEIGHTS = "yolo11n-seg.pt"   # <-- change UNIQUEMENT cette ligne pour tester un autre modèle
 
 # --- Hyperparamètres d'entraînement -----------------------------------------
-EPOCHS = 100         # nombre maximal d'epochs - l'arrêt anticipé (PATIENCE) coupe généralement avant
+EPOCHS = 100         # nombre d'epochs (arrêt anticipé désactivé depuis le 09/10/2026, voir PATIENCE)
 IMGSZ = 640          # doit correspondre à la taille des tuiles du dataset (voir slice_dataset.py)
 BATCH = 16           # -1 = laisse Ultralytics choisir automatiquement selon la VRAM disponible
-PATIENCE = 20        # arrêt anticipé si aucune amélioration après N epochs (0 = désactivé, va au bout des EPOCHS)
+PATIENCE = 0         # 0 = arrêt anticipé désactivé : va au bout des EPOCHS (best.pt reste la meilleure epoch en val).
+#                       Passé de 20 à 0 le 09/10/2026 : avec 20, le multi de la campagne du 08/10 s'est arrêté à
+#                       l'epoch 64 (meilleure : 44), taux d'apprentissage encore à 40 % - sans jamais atteindre la
+#                       fin du programme (taux bas + 10 dernières epochs sans mosaïque), où les modèles gagnent le
+#                       plus (meilleure epoch du mono : 95/100). Résultat : multi 0,466 -> 0,368 sur les mêmes images.
 DEVICE = 0           # 0 = 1er GPU ; "cpu" = CPU ; "0,1" = multi-GPU - repli automatique sur CPU si
                      # aucun GPU CUDA n'est détecté (voir _resolve_device), donc laisser 0 ici ne
                      # plante plus sur une machine/installation sans CUDA (torch CPU-only par ex.)
@@ -230,24 +240,28 @@ def _resolve_split_dir(config_path: Path) -> Path:
     associé à la configuration (ex: 4_sliced_dataset_mono_class ->
     2_split_dataset_mono_class).
     """
+    # Corrigé le 23/09/2026 - deux erreurs cumulées faisaient TOUJOURS retomber sur le
+    # repli (2_split_dataset, le dataset multi-classe complet), y compris pour un run
+    # mono-classe ou dédié à un site : (1) le manifeste s'appelle ".parent_manifest.json"
+    # (avec un point, voir split_dataset.PARENT_MANIFEST_FILENAME), pas "parent_manifest.json" ;
+    # (2) `path` (relatif, versionné) n'était pas résolu contre DATA_ROOT, donc cherché
+    # relativement au dossier courant. Conséquence : les visualisations de fin
+    # d'entraînement (visualisations_test/) des runs mono/site montraient le test multi-classe
+    # complet, pas celui du dataset réellement entraîné.
+    from src.data.utils.split_dataset import PARENT_MANIFEST_FILENAME, SPLIT_DIR
     try:
-        import yaml
-        from src.paths_config import DATA_ROOT, TRAINING_RUNS_DIR
-        
         with open(config_path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+            cfg = resolve_data_config_path_field(yaml.safe_load(f) or {})
         dataset_path = cfg.get("path")
         if dataset_path:
             dataset_dir = Path(dataset_path)
-            candidate_name = dataset_dir.name.replace(
-                "4_sliced_dataset", "2_split_dataset"
-            )
+            candidate_name = dataset_dir.name.replace("4_sliced_dataset", "2_split_dataset", 1)
             candidate_dir = dataset_dir.parent / candidate_name
-            if (candidate_dir / "parent_manifest.json").exists():
+            if (candidate_dir / PARENT_MANIFEST_FILENAME).exists():
                 return candidate_dir
-    except Exception:
-        pass
-    from src.data.utils.split_dataset import SPLIT_DIR
+            print(f"⚠️  Dossier de split introuvable pour {config_path} ({candidate_dir}) - repli sur {SPLIT_DIR}.")
+    except Exception as e:  # noqa: BLE001 - la visualisation ne doit jamais faire échouer un run
+        print(f"⚠️  Résolution du dossier de split impossible ({e}) - repli sur {SPLIT_DIR}.")
 
     return Path(SPLIT_DIR)
 
@@ -260,19 +274,13 @@ def _prepare_resolved_data_config(config_path: Path, target_dir: Path) -> Path:
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f)
 
-    raw_path_str = config_data.get("path", "")
-    
-    # Si le YAML contient un chemin absolu vers un PixelOdyssey sur un autre disque,
-    # ou un chemin relatif sous '3. Processed dataset' :
-    sub_path = "3. Processed dataset"
-    if sub_path in raw_path_str:
-        # Extrait la partie après '3. Processed dataset'
-        suffix = raw_path_str.split(sub_path)[-1].lstrip(r"\/")
-        resolved_path = DATA_ROOT / sub_path / suffix
-    else:
-        resolved_path = DATA_ROOT / raw_path_str
-
-    config_data["path"] = str(resolved_path)
+    # Résolution factorisée dans src/paths_config.py (resolve_data_config_path_field) -
+    # réutilisée telle quelle par training_report.generate_report() et
+    # src.review.scoped_report, qui ont besoin exactement du même traitement avant
+    # de transmettre un data_config à Ultralytics (voir la docstring de cette fonction
+    # pour le pourquoi : évite qu'Ultralytics résolve 'path' contre son propre
+    # datasets_dir global plutôt que DATA_ROOT).
+    config_data = resolve_data_config_path_field(config_data)
 
     target_dir.mkdir(parents=True, exist_ok=True)
     resolved_yaml_path = target_dir / "resolved_data_config.yaml"
@@ -309,7 +317,13 @@ def _build_run_name(model_weights: str, tag: str) -> str:
     return f"{tag}_{model_slug}_{timestamp}"
 
 
-def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = False, run_tag: str = RUN_TAG):
+def launch_training(
+    config_path: Path = CONFIG_PATH,
+    default_augment: bool = False,
+    run_tag: str = RUN_TAG,
+    skip_viz: bool = False,
+    viz_limit: Optional[int] = None,
+):
     """`config_path` : référentiel de classes/dataset à utiliser (défaut : config/data_config.yaml).
     Pour une variante expérimentale (ex: config/variants/data_config_no_debris.yaml, qui pointe vers son
     propre `path:` de dataset tuilé - voir data_pipeline.py --config/--suffix pour la générer),
@@ -327,7 +341,15 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
     défaut réflexe.
 
     `run_tag` : remplace RUN_TAG pour CE run (utile pour lancer un run ponctuel, ex: un baseline,
-    sans éditer la constante en tête de fichier et risquer de l'oublier active au prochain run)."""
+    sans éditer la constante en tête de fichier et risquer de l'oublier active au prochain run).
+
+    `skip_viz` : saute la génération des images annotées du split test après l'entraînement (voir
+    bloc EXPORT DES VISUALISATIONS ci-dessous) - utile pour un run rapide/exploratoire où ces
+    images ne servent à rien (elles restent régénérables après coup, sans réentraîner, via
+    src/review/visualize_predictions.py).
+
+    `viz_limit` : nombre max d'images du split test à annoter (défaut : toutes) - utile pour un
+    coup d'oeil rapide sur un gros split test sans attendre l'inférence sur chaque image."""
     run_name = _build_run_name(MODEL_WEIGHTS, run_tag)
     run_dir = OUTPUT_DIR / run_name
 
@@ -348,6 +370,47 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
 
     resolved_config = _prepare_resolved_data_config(config_path, run_dir)
 
+    # Garde-fou anti-collision (ajouté le 23/09/2026 - bug constaté sur les 6 runs
+    # relancés le jour même, ex: A_mono_v2_yolo11n-seg_20260923_155140) :
+    # `_prepare_resolved_data_config` ci-dessus vient de CRÉER `run_dir` (pour y écrire
+    # `resolved_data_config.yaml`, qui doit persister DANS le dossier du run - voir
+    # `resolve_run_class_config_path` dans training_report.py). Avec `exist_ok=False`
+    # ci-dessous, Ultralytics voit alors ce dossier déjà présent et dévie SILENCIEUSEMENT
+    # tous les vrais résultats (poids, args.yaml, courbes...) vers "<run_name>2" au lieu
+    # de `run_dir` - dossier que le reste de ce script (rapport, visualisations) ne
+    # regarde jamais. `exist_ok=True` est donc nécessaire, MAIS seulement parce qu'on
+    # sait exactement ce qu'on vient d'y mettre (juste ce yaml) : si `run_dir` contient
+    # autre chose que ça, c'est le signe d'un VRAI run antérieur au même nom (le cas
+    # extrême que le garde-fou d'origine visait) - on doit bloquer plutôt qu'écraser.
+    unexpected_entries = sorted(p.name for p in run_dir.iterdir() if p.name != "resolved_data_config.yaml")
+    if unexpected_entries:
+        raise RuntimeError(
+            f"🛑 {run_dir} contient déjà {unexpected_entries} - probablement un run "
+            f"antérieur au même nom. Abandon plutôt que d'écraser silencieusement "
+            f"(voir 'Non-écrasement des runs' en tête de fichier)."
+        )
+
+    # Instantané de la répartition train/val/test RÉELLEMENT utilisée (23/09/2026) : le
+    # manifeste du dataset peut changer après coup (split reconstruit, nouvelles images) ;
+    # evaluation_matrix.py s'appuie sur CET instantané pour vérifier qu'aucune image vue à
+    # l'entraînement ne se retrouve dans le test évalué.
+    try:
+        import shutil
+        from src.data.utils.split_dataset import PARENT_MANIFEST_FILENAME
+        train_split_dir = _resolve_split_dir(config_path)
+        with open(config_path, "r", encoding="utf-8") as f:
+            _sliced_name = Path(resolve_data_config_path_field(yaml.safe_load(f) or {})["path"]).name
+        # N'enregistre l'instantané que si le split trouvé est bien CELUI de ce dataset (et pas
+        # le repli par défaut de _resolve_split_dir) - sinon le contrôle de fuite lui ferait
+        # confiance à tort.
+        if train_split_dir.name == _sliced_name.replace("4_sliced_dataset", "2_split_dataset", 1):
+            shutil.copy2(train_split_dir / PARENT_MANIFEST_FILENAME, run_dir / "training_parent_manifest.json")
+        else:
+            print(f"⚠️  Split d'entraînement non identifié avec certitude ({train_split_dir}) - "
+                  f"instantané non enregistré (le contrôle de fuite utilisera le manifeste actuel).")
+    except Exception as e:  # noqa: BLE001 - ne doit jamais empêcher l'entraînement
+        print(f"⚠️  Instantané du split d'entraînement non enregistré ({e}).")
+
     train_kwargs = dict(
         data=str(resolved_config),
         epochs=EPOCHS,
@@ -359,7 +422,11 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
         project=str(OUTPUT_DIR),
         name=run_name,
         plots=True,
-        exist_ok=False,  # garde-fou anti-écrasement, voir docstring en tête de fichier
+        # True (pas False) depuis le 23/09/2026 : `run_dir` est intentionnellement
+        # pré-créé juste au-dessus par `_prepare_resolved_data_config` - voir le
+        # garde-fou ci-dessus, qui couvre maintenant le cas qu'`exist_ok=False`
+        # protégeait à l'origine (deux runs au même nom).
+        exist_ok=True,
     )
     if not default_augment:
         # Augmentation choisie pour la vue nadir + rééquilibrage des classes rares -
@@ -393,7 +460,8 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
     # --- 👁️ EXPORT DES VISUALISATIONS DU SPLIT TEST -------------------------
     if not skip_viz:
         print(
-            "\n--- 👁️ GÉNÉRATION DES IMAGES DU SPLIT TEST (Vert=Réussi, Rouge=Raté, Bleu=Faux Positif) ---"
+            "\n--- 👁️ GÉNÉRATION DES IMAGES DU SPLIT TEST (Vert=Réussi, Orange=Masque à ajuster, "
+            "Rouge=Raté, Bleu=Faux Positif) ---"
         )
         best_pt = run_dir / "weights" / "best.pt"
         if best_pt.exists():
@@ -401,10 +469,24 @@ def launch_training(config_path: Path = CONFIG_PATH, default_augment: bool = Fal
                 split_dir = _resolve_split_dir(config_path)
                 viz_dir = run_dir / "visualisations_test"
 
+                # Taxonomie dynamique : dérivée du run lui-même (args.yaml, écrit par
+                # Ultralytics au lancement de l'entraînement) plutôt que du `config_path`
+                # reçu en paramètre par CETTE fonction - qui pourrait en théorie diverger
+                # (ex: `launch_training` appelée programmatiquement avec un config_path qui
+                # ne correspond pas exactement au dataset réellement entraîné). Voir la
+                # docstring de resolve_run_class_config_path pour le détail. Repli sur
+                # `config_path` seulement si args.yaml est illisible pour une raison ou
+                # une autre - ne doit jamais faire échouer tout le run.
+                try:
+                    viz_class_config_path = resolve_run_class_config_path(run_dir)
+                except (FileNotFoundError, ValueError) as e:
+                    print(f"⚠️ Taxonomie du run non retrouvée automatiquement ({e}) - repli sur --config.")
+                    viz_class_config_path = config_path
+
                 run_visualize(
                     model_path=str(best_pt),
                     scope="test",
-                    class_config_path=config_path,
+                    class_config_path=viz_class_config_path,
                     split_dir=str(split_dir),
                     output_dir=str(run_dir),
                     run_id="visualisations_test",
@@ -442,5 +524,20 @@ if __name__ == "__main__":
         help=f"Remplace RUN_TAG (défaut actuel : '{RUN_TAG}') pour CE run uniquement, sans "
              f"éditer le fichier.",
     )
+    parser.add_argument(
+        "--skip-viz", action="store_true",
+        help="Ne génère pas les images annotées du split test après l'entraînement (régénérable "
+             "après coup sans réentraîner, via src/review/visualize_predictions.py).",
+    )
+    parser.add_argument(
+        "--viz-limit", type=int, default=None,
+        help="Nombre max d'images du split test à annoter (défaut : toutes).",
+    )
     args = parser.parse_args()
-    launch_training(config_path=Path(args.config), default_augment=args.default_augment, run_tag=args.tag)
+    launch_training(
+        config_path=Path(args.config),
+        default_augment=args.default_augment,
+        run_tag=args.tag,
+        skip_viz=args.skip_viz,
+        viz_limit=args.viz_limit,
+    )

@@ -562,21 +562,71 @@ def _read_run_hyperparams(run_dir: Path) -> Dict:
         return {}
 
 
-def _read_sliced_data_fingerprint() -> Optional[str]:
-    """Lit le fingerprint de `4_sliced_dataset` (donnée réellement vue à
-    l'entraînement, après la cascade split -> augmentation -> slicing) AU
-    MOMENT de la génération du rapport - fiable juste après un entraînement
-    (cas d'usage normal, train.py appelle generate_report() immédiatement
-    après), mais reflète l'état COURANT du dossier si le rapport est
-    régénéré plus tard après un nouveau run de data_pipeline.py. Best-effort :
-    None si indisponible (chemin non monté, dataset jamais slicé...)."""
+def _read_sliced_data_fingerprint(sliced_dir=None) -> Optional[str]:
+    """Lit le fingerprint du dossier de tuiles RÉELLEMENT évalué (`sliced_dir`, pris dans
+    le champ `path` du data_config transmis à Ultralytics) AU MOMENT de la génération du
+    rapport. Corrigé le 23/09/2026 : lisait toujours `4_sliced_dataset` (dataset multi-classe
+    par défaut), y compris pour un modèle mono-classe ou un dataset de site - les rapports
+    mono de la matrice affichaient ainsi le fingerprint du dataset multi-classe.
+    Best-effort : None si indisponible (chemin non monté, dataset jamais slicé...)."""
     try:
         from src.data.utils.pipeline_utils import read_upstream_fingerprint
         from src.data.utils.slice_dataset import MANIFEST_FILENAME as SLICE_MANIFEST_FILENAME
         from src.data.utils.slice_dataset import SLICED_DIR
-        return read_upstream_fingerprint(Path(SLICED_DIR) / SLICE_MANIFEST_FILENAME)
+        base = Path(sliced_dir) if sliced_dir else Path(SLICED_DIR)
+        return read_upstream_fingerprint(base / SLICE_MANIFEST_FILENAME)
     except Exception:
         return None
+
+
+def resolve_run_class_config_path(run_dir) -> Path:
+    """Retrouve le data_config.yaml (taxonomie) RÉELLEMENT utilisé pour entraîner
+    ce run, en lisant le champ `data:` de son `args.yaml` - fichier qu'Ultralytics
+    écrit lui-même automatiquement au tout début de `model.train()`, jamais modifié
+    après coup.
+
+    Pourquoi lire ça plutôt que de faire circuler un `data_config_path` en
+    paramètre d'appel en appel (train.py -> generate_report() -> run_visualize()) :
+    un paramètre repassé à la main peut diverger silencieusement du run réel (mauvais
+    `--config` fourni à une régénération de rapport plus tard, valeur oubliée à un
+    nouveau site d'appel...) - alors que `args.yaml` est un ENREGISTREMENT figé de ce
+    qui a VRAIMENT servi à entraîner CE `best.pt` précis. C'est ça, "dynamique en
+    fonction de la taxonomie du modèle" : dérivé du run lui-même, jamais reconstitué
+    à partir d'un paramètre externe qu'il faudrait garder synchronisé à la main.
+
+    Le champ `data:` d'un ANCIEN run (avant l'introduction de
+    `_prepare_resolved_data_config` dans train.py, ex: tous les runs antérieurs au
+    11/09/2026) contient un chemin RELATIF à la racine du repo (ex:
+    "config\\variants\\data_config_SL_mono.yaml" - celui passé sur la ligne de
+    commande) ; un run PLUS RÉCENT y trouve le chemin ABSOLU du
+    `resolved_data_config.yaml` écrit dans son propre dossier (même
+    class_taxonomy/class_aliases/names, seul `path:` diffère). Les deux cas sont
+    gérés ici de façon transparente pour l'appelant.
+    """
+    run_dir = Path(run_dir)
+    args_path = run_dir / "args.yaml"
+    if not args_path.exists():
+        raise FileNotFoundError(
+            f"{args_path} introuvable - impossible de retrouver la taxonomie exacte de ce run."
+        )
+    import yaml as _yaml
+    with open(args_path, "r", encoding="utf-8") as f:
+        args_data = _yaml.safe_load(f) or {}
+    data_field = args_data.get("data")
+    if not data_field:
+        raise ValueError(f"{args_path} ne contient pas de champ 'data:' - fichier inattendu/corrompu ?")
+
+    data_path = Path(data_field)
+    if not data_path.is_absolute():
+        # Chemin relatif = ancien run, relatif à la racine du repo (voir docstring).
+        project_root = Path(__file__).resolve().parent.parent.parent
+        data_path = project_root / data_path
+    if not data_path.exists():
+        raise FileNotFoundError(
+            f"{args_path} référence '{data_field}', introuvable à {data_path} - "
+            f"fichier déplacé/supprimé depuis l'entraînement de ce run ?"
+        )
+    return data_path
 
 
 # ----------------------------------------------------------------------------
@@ -608,6 +658,7 @@ def generate_report(
     from ultralytics import YOLO  # import tardif : évite de charger torch si le module est juste inspecté
 
     from src.data.utils.class_config import DEFAULT_CLASS_CONFIG_PATH, assert_model_matches_taxonomy
+    from src.paths_config import resolve_data_config_path_field
 
     run_dir = Path(run_dir)
     weights_path = run_dir / "weights" / weights_name
@@ -615,10 +666,23 @@ def generate_report(
         raise FileNotFoundError(f"Poids introuvables : {weights_path}")
 
     if data_config_path is None:
-        # À défaut d'indication explicite, on retombe sur la config par défaut
-        # du projet (cohérent avec train.py) - dérivée de class_config.py
-        # (seule source de vérité pour ce chemin), jamais recalculée ici.
-        data_config_path = DEFAULT_CLASS_CONFIG_PATH
+        # À défaut d'indication explicite : d'abord la taxonomie RÉELLE de ce run
+        # (lue dans son propre args.yaml, voir resolve_run_class_config_path -
+        # dynamique, ne dépend d'aucun paramètre à faire circuler à la main).
+        # Seulement si ce run est trop ancien/corrompu pour ça, repli sur la config
+        # par défaut du projet (7-classes) - avec un avertissement explicite, jamais
+        # silencieux : un rapport généré avec la mauvaise taxonomie serait pire
+        # qu'une erreur qui bloque.
+        try:
+            data_config_path = resolve_run_class_config_path(run_dir)
+        except (FileNotFoundError, ValueError) as e:
+            print(
+                f"⚠️  Taxonomie de {run_dir.name} non retrouvable automatiquement ({e}) - "
+                f"repli sur la config par défaut du projet ({DEFAULT_CLASS_CONFIG_PATH}). "
+                f"Si ce run utilise une taxonomie différente (mono-classe, no_debris...), "
+                f"passe --data explicitement plutôt que de faire confiance à ce repli."
+            )
+            data_config_path = DEFAULT_CLASS_CONFIG_PATH
 
     model = YOLO(str(weights_path))
 
@@ -636,10 +700,21 @@ def generate_report(
     # temporaire scopé (src/review/scoped_report.py) qui copie data_config.yaml mais
     # pourrait en théorie diverger.
     with open(data_config_path, "r", encoding="utf-8") as f:
-        data_config_names = yaml.safe_load(f).get("names", {})
-    target_names = {int(k): str(v) for k, v in data_config_names.items()}
+        raw_config_data = yaml.safe_load(f) or {}
+    target_names = {int(k): str(v) for k, v in raw_config_data.get("names", {}).items()}
     model_names = {int(k): str(v) for k, v in model.names.items()}
     assert_model_matches_taxonomy(model_names, target_names, model_label=str(weights_path))
+
+    # 'path' résolu en absolu (ancré DATA_ROOT), JAMAIS transmis tel quel à Ultralytics :
+    # un data_config*.yaml versionné sous Git a un chemin relatif par construction
+    # (portable, voir src/paths_config.py) - sans ce traitement, Ultralytics le résout
+    # contre SON PROPRE réglage global `datasets_dir` au lieu de DATA_ROOT (bug constaté
+    # le 11/09/2026 : "images not found" sous <datasets_dir Ultralytics>/3. Processed
+    # dataset/... - rien à voir avec le modèle ou la donnée). Même traitement que
+    # train.py (_prepare_resolved_data_config), factorisé dans
+    # resolve_data_config_path_field pour ne pas le dupliquer une 3e fois dans
+    # scoped_report.py.
+    resolved_config_data = resolve_data_config_path_field(raw_config_data)
 
     sections_html = []
     splits_payload: Dict[str, Dict] = {}
@@ -653,10 +728,14 @@ def generate_report(
     # qu'Ultralytics écrit dans ce cas (confusion_matrix.png, PR_curve.png...) ne polluent
     # run_dir - ce dossier temporaire est jeté à la sortie du `with`.
     with tempfile.TemporaryDirectory(prefix="pixelodyssey_val_") as tmp_val_dir:
+        resolved_data_config_path = Path(tmp_val_dir) / "resolved_data_config.yaml"
+        with open(resolved_data_config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(resolved_config_data, f, sort_keys=False, allow_unicode=True)
+
         for split in splits:
             try:
                 metrics = model.val(
-                    data=str(data_config_path), split=split, plots=True, verbose=False,
+                    data=str(resolved_data_config_path), split=split, plots=True, verbose=False,
                     project=tmp_val_dir, name=f"eval_{split}", exist_ok=True,
                 )
             except Exception as e:  # noqa: BLE001 - un split absent/vide ne doit pas faire échouer tout le rapport
@@ -690,7 +769,7 @@ def generate_report(
         "run_name": run_dir.name,
         "weights_name": weights_name,
         "hyperparams": _read_run_hyperparams(run_dir),
-        "sliced_data_fingerprint": _read_sliced_data_fingerprint(),
+        "sliced_data_fingerprint": _read_sliced_data_fingerprint(resolved_config_data.get("path")),
         "splits": splits_payload,
     }
     metrics_path = run_dir / f"{output_basename}_metrics.json"
@@ -702,7 +781,8 @@ def generate_report(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Génère le rapport de lecture HTML d'un run d'entraînement PixelOdyssey.")
     parser.add_argument("--run", required=True, help="Dossier du run (ex: \"E:\\PixelOdyssey\\6. Model outputs\\runs\\baseline_yolo11n-seg_AAAAMMJJ_HHMMSS\")")
-    parser.add_argument("--data", default=None, help="Chemin vers data_config.yaml (par défaut : config/data_config.yaml du projet)")
+    parser.add_argument("--data", default=None, help="Chemin vers data_config.yaml (par défaut : retrouvé automatiquement depuis le "
+                         "args.yaml du run lui-même - voir resolve_run_class_config_path -, sinon config/data_config.yaml du projet)")
     parser.add_argument("--weights", default="best.pt", help="Nom du fichier de poids à évaluer, dans <run>/weights/ (défaut: best.pt)")
     parser.add_argument("--splits", default="val,test", help="Splits à évaluer, séparés par des virgules (défaut: val,test)")
     parser.add_argument("--output-basename", default="rapport",

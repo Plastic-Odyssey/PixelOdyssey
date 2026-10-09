@@ -1,0 +1,33 @@
+run_timestamp,taxonomie,entrainement,run_name,evaluation,f1_macro_test,test_instances,sliced_data_fingerprint
+2026-09-23 17:26:00,multi,Full,reference_multiclasse_v2_yolo11n-seg_20260923_114634,Full,0.4686800000000001,2678,21163f069cd78a37
+2026-09-23 17:26:00,multi,Full,reference_multiclasse_v2_yolo11n-seg_20260923_114634,Santa Luzia,0.40218857142857145,2460,21163f069cd78a37
+2026-09-23 17:26:00,multi,Full,reference_multiclasse_v2_yolo11n-seg_20260923_114634,Saint Brandon,0.285552,39,21163f069cd78a37
+2026-09-23 17:26:00,multi,Full,reference_multiclasse_v2_yolo11n-seg_20260923_114634,Aldabra,0.53203,179,21163f069cd78a37
+2026-09-23 17:26:00,multi,Santa Luzia,reference_SL_v2_yolo11n-seg_20260923_130239,Full,0.3616242857142858,2678,21163f069cd78a37
+2026-09-23 17:26:00,multi,Santa Luzia,reference_SL_v2_yolo11n-seg_20260923_130239,Santa Luzia,0.38247857142857145,2460,21163f069cd78a37
+2026-09-23 17:26:00,multi,Santa Luzia,reference_SL_v2_yolo11n-seg_20260923_130239,Saint Brandon,0.092566,39,21163f069cd78a37
+2026-09-23 17:26:00,multi,Santa Luzia,reference_SL_v2_yolo11n-seg_20260923_130239,Aldabra,0.34358000000000005,179,21163f069cd78a37
+2026-09-23 17:26:00,multi,Saint Brandon,SB_dedie_yolo11n-seg_20260911_020811,Full,0.06645142857142858,2678,21163f069cd78a37
+2026-09-23 17:26:00,multi,Saint Brandon,SB_dedie_yolo11n-seg_20260911_020811,Santa Luzia,0.03650428571428571,2460,21163f069cd78a37
+2026-09-23 17:26:00,multi,Saint Brandon,SB_dedie_yolo11n-seg_20260911_020811,Saint Brandon,0.26677399999999996,39,21163f069cd78a37
+2026-09-23 17:26:00,multi,Saint Brandon,SB_dedie_yolo11n-seg_20260911_020811,Aldabra,0.20689,179,21163f069cd78a37
+2026-09-23 17:26:00,multi,Aldabra,A_dedie_v2_yolo11n-seg_20260923_132931,Full,0.12930714285714287,2678,21163f069cd78a37
+2026-09-23 17:26:00,multi,Aldabra,A_dedie_v2_yolo11n-seg_20260923_132931,Santa Luzia,0.09286571428571429,2460,21163f069cd78a37
+2026-09-23 17:26:00,multi,Aldabra,A_dedie_v2_yolo11n-seg_20260923_132931,Saint Brandon,0.141524,39,21163f069cd78a37
+2026-09-23 17:26:00,multi,Aldabra,A_dedie_v2_yolo11n-seg_20260923_132931,Aldabra,0.5098625,179,21163f069cd78a37
+2026-09-23 17:26:00,mono,Full,reference_monoclasse_v2_yolo11n-seg_20260923_134351,Full,0.55557,2678,21163f069cd78a37
+2026-09-23 17:26:00,mono,Full,reference_monoclasse_v2_yolo11n-seg_20260923_134351,Santa Luzia,0.55069,2460,21163f069cd78a37
+2026-09-23 17:26:00,mono,Full,reference_monoclasse_v2_yolo11n-seg_20260923_134351,Saint Brandon,0.45878,39,21163f069cd78a37
+2026-09-23 17:26:00,mono,Full,reference_monoclasse_v2_yolo11n-seg_20260923_134351,Aldabra,0.63822,179,21163f069cd78a37
+2026-09-23 17:26:00,mono,Santa Luzia,SL_mono_v2_yolo11n-seg_20260923_150848,Full,0.52131,2678,21163f069cd78a37
+2026-09-23 17:26:00,mono,Santa Luzia,SL_mono_v2_yolo11n-seg_20260923_150848,Santa Luzia,0.54658,2460,21163f069cd78a37
+2026-09-23 17:26:00,mono,Santa Luzia,SL_mono_v2_yolo11n-seg_20260923_150848,Saint Brandon,0.27909,39,21163f069cd78a37
+2026-09-23 17:26:00,mono,Santa Luzia,SL_mono_v2_yolo11n-seg_20260923_150848,Aldabra,0.38792,179,21163f069cd78a37
+2026-09-23 17:26:00,mono,Saint Brandon,SB_mono_yolo11n-seg_20260911_022306,Full,0.25337,2678,21163f069cd78a37
+2026-09-23 17:26:00,mono,Saint Brandon,SB_mono_yolo11n-seg_20260911_022306,Santa Luzia,0.24094,2460,21163f069cd78a37
+2026-09-23 17:26:00,mono,Saint Brandon,SB_mono_yolo11n-seg_20260911_022306,Saint Brandon,0.39288,39,21163f069cd78a37
+2026-09-23 17:26:00,mono,Saint Brandon,SB_mono_yolo11n-seg_20260911_022306,Aldabra,0.45943,179,21163f069cd78a37
+2026-09-23 17:26:00,mono,Aldabra,A_mono_v2_yolo11n-seg_20260923_155140,Full,0.34753,2678,21163f069cd78a37
+2026-09-23 17:26:00,mono,Aldabra,A_mono_v2_yolo11n-seg_20260923_155140,Santa Luzia,0.31976,2460,21163f069cd78a37
+2026-09-23 17:26:00,mono,Aldabra,A_mono_v2_yolo11n-seg_20260923_155140,Saint Brandon,0.31168,39,21163f069cd78a37
+2026-09-23 17:26:00,mono,Aldabra,A_mono_v2_yolo11n-seg_20260923_155140,Aldabra,0.70287,179,21163f069cd78a37

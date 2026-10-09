@@ -1,0 +1,93 @@
+# PixelOdyssey - Configuration MONO-CLASSE AVEC "Inconnu" et "à déterminer" (variante, 24/09/2026)
+#
+# Identique à config/data_config_mono_class.yaml, sauf deux classes brutes qui passent
+# de "exclude" à la classe déchet 0 : "Inconnu" (2 370 annotations, dont 1 098 à Saint
+# Brandon, soit 75 % des annotations de ce site) et "à déterminer" (357). Hypothèse
+# testée : exclues, ces classes restent VISIBLES dans l'image sans label, et le modèle
+# apprend donc "ceci n'est pas un déchet" sur des objets qui en sont très probablement
+# (79 % des fausses alertes mono à Saint Brandon tombent sur un Inconnu). "Morceaux de
+# bois" et "Verre" restent exclus : matière confirmée non plastique, de vrais négatifs.
+#
+# Comparaison équitable avec le mono de référence (même split et même banc de test figé
+# grâce à l'équilibrage indépendant de la taxonomie, voir split_dataset.py) : évaluer
+# les DEUX modèles sur la même vérité terrain, en neutralisant ces zones :
+#   python -m src.training.object_level_eval --run <run> --gt-config config/data_config_mono_class.yaml --ignore-zones "Inconnu,à déterminer"
+#
+# Générer le dataset puis entraîner :
+#   python -m src.data.data_pipeline --config config/data_config_mono_class_inconnu.yaml --suffix _mono_inconnu
+#   python -m src.training.train --config config/data_config_mono_class_inconnu.yaml --tag monoclasse_inconnu_v3
+
+path: 3. Processed dataset/4_sliced_dataset_mono_inconnu
+train: images/train
+val: images/val
+test : images/test
+
+# ============================================================================
+# TAXONOMIE CIBLE : une seule classe - on ne cherche plus à distinguer QUOI,
+# seulement SI un déchet plastique est présent.
+# ============================================================================
+names:
+  0: Dechet_Plastique
+
+# ============================================================================
+# RÉFÉRENTIEL DE CLASSES - mêmes clés que config/data_config.yaml (le nom brut
+# annoté par chaque lot ne change pas), mais TOUTES pointent vers la même
+# classe cible 0 au lieu de 7 super-classes séparées. `class_aliases`
+# ci-dessous est repris À L'IDENTIQUE (ces divergences d'orthographe entre
+# lots existent indépendamment du nombre de super-classes).
+#
+# Décisions reprises À L'IDENTIQUE du référentiel 7-classes, PAS changées
+# sans raison :
+#   - "Morceaux de bois", "Verre" restent exclus : matière confirmée NON
+#     plastique - le critère d'exclusion "est-ce du plastique ?" reste valide
+#     ici, contrairement au critère de forme qui n'a plus de sens.
+#   - "à déterminer" reste exclu : matière encore réellement inconnue (pourrait
+#     ne pas être du plastique) - décision non tranchée, gardée prudente.
+#   - "Inconnu" reste EXCLU ici aussi (décision du 02/09/2026, revenant sur une
+#     proposition de réintégration faite le même jour). L'argument théorique
+#     "l'exclusion du 26/08 visait une confusion de FORME, sans objet en
+#     mono-classe" tient toujours, mais Jame a choisi de garder "Inconnu" hors
+#     du dataset pour l'instant - prudence assumée plutôt qu'optimisation du
+#     volume de données. À reconsidérer plus tard si besoin de plus de données.
+# ============================================================================
+
+class_taxonomy:
+  "bouteille PET": 0
+  "Bouteille Plastique rigide": 0
+  "fliflops": 0
+  "cagette": 0
+  "Bouées": 0
+  "Bouées pieuvre": 0
+  "flotteurs": 0
+  "Cordage": 0
+  "Petit bidon": 0
+  "Sceau": 0
+  "Plastique souple (sac)": 0
+  "Mousse expansée": 0
+  "Polystyrene": 0
+  "Fragments plastique rigide": 0
+  "Tissu": 0
+  "casques": 0
+  "bouchons": 0
+  "Morceaux de bois": exclude
+  "Verre": exclude
+  "à déterminer": 0         # variante 24/09/2026 : compté comme déchet (exclu dans data_config_mono_class.yaml)
+  "Inconnu": 0              # variante 24/09/2026 : compté comme déchet (exclu dans data_config_mono_class.yaml)
+
+  # Auto-mapping des super-classes 7-classes vers elles-mêmes (nécessaire
+  # UNIQUEMENT pour bootstrap_annotate.py - voir la même section dans
+  # data_config.yaml) : toutes vers la classe unique 0 ici aussi.
+  "Bouteille": 0
+  "Flipflops": 0
+  "Cagette": 0
+  "Bouee": 0
+  "Cordage_Filet": 0
+  "Bidon": 0
+  "Debris_Divers": 0
+
+# Identique à data_config.yaml - ces divergences d'orthographe entre lots ne
+# dépendent pas du nombre de super-classes.
+class_aliases:
+  "flipflops": "fliflops"
+  "bouteilles_pet": "bouteille PET"
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide"

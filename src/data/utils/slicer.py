@@ -20,11 +20,14 @@ Fonctionnalités :
   tuile vide sur 10 est gardée.
 - Support multi-résolution : traite aussi bien des orthomosaïques brutes que
   des tuiles déjà découpées.
-- Filtre anti-bordure noire (max_black_fraction) : écarte une tuile SANS
-  OBJET ANNOTÉ dont la fraction de pixels ~noirs dépasse ce seuil, plutôt que
-  de la garder comme "exemple de fond" (typiquement des bordures de rotation
-  d'orthomosaïque, pas de vrais fonds de scène). N'écarte jamais une tuile
-  contenant un objet annoté.
+- Filtre anti-bordure noire (max_nodata_fraction, depuis le 24/09/2026) : écarte
+  TOUTE tuile (annotée ou non) dont plus de max_nodata_fraction des pixels sont du
+  "nodata" - zones noires qui touchent le bord de l'image parente (bordures de
+  rotation d'orthomosaïque, bord noir des imagettes SB), voir compute_nodata_mask().
+  Les pixels sombres À L'INTÉRIEUR de la scène (ombres, rochers, objets noirs) ne
+  comptent PAS : mesuré le 24/09/2026 sur les 561 images, un filtre "tout pixel
+  noir" aurait retiré 55 % des tuiles annotées et 25 % des objets (99 % à Saint
+  Brandon), contre 1 % des objets avec cette définition au seuil de 25 %.
 
 Ce module ne connaît pas les classes : il lit et écrit les IDs de classe
 présents dans les fichiers .txt tels quels, sans les traduire. La traduction
@@ -64,7 +67,38 @@ from src.data.utils.tiling_geometry import iter_tile_windows
 # sans lui, un tel changement passerait inaperçu par le garde-fou de cache et
 # mélangerait silencieusement deux logiques différentes dans le même dossier
 # de sortie.
-LOGIC_VERSION = 4
+LOGIC_VERSION = 5  # 24/09/2026 : filtre nodata (composantes noires de bord) sur toutes les tuiles
+
+
+# Seuil "noir" par canal (BGR) : <= 10 plutôt que 0 strict pour absorber le bruit de
+# compression JPEG autour du noir (bords des imagettes SB).
+NODATA_MAX_VALUE = 10
+# Une composante noire connectée au bord de l'image n'est du nodata que si elle pèse au
+# moins cette fraction de l'image : écarte les coins sombres d'une photo drone (vignettage,
+# ombre portée au bord - 0,01 à 0,02 % de l'image mesurés sur 4 photos DJI d'Aldabra, qui
+# n'ont par construction aucun nodata).
+NODATA_MIN_COMPONENT_FRACTION = 0.001
+
+
+def compute_nodata_mask(img: np.ndarray) -> np.ndarray:
+    """Masque booléen (H, W) des pixels "nodata" d'une image BGR : pixels quasi noirs
+    (tous canaux <= NODATA_MAX_VALUE) appartenant à une composante connexe (8-voisinage)
+    qui TOUCHE le bord de l'image et pèse au moins NODATA_MIN_COMPONENT_FRACTION de sa
+    surface. Un objet sombre ou une ombre au milieu de la scène n'est jamais du nodata.
+
+    Réutilisable côté application (ex: ignorer une prédiction posée sur le bord noir d'une
+    orthomosaïque) - même définition qu'à l'entraînement."""
+    h, w = img.shape[:2]
+    near_black = np.all(img <= NODATA_MAX_VALUE, axis=2).astype(np.uint8)
+    if not near_black.any():
+        return np.zeros((h, w), dtype=bool)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(near_black, connectivity=8)
+    edge_labels = np.unique(np.concatenate([labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1]]))
+    min_area = NODATA_MIN_COMPONENT_FRACTION * h * w
+    keep = [int(i) for i in edge_labels if i != 0 and stats[int(i), cv2.CC_STAT_AREA] >= min_area]
+    if not keep:
+        return np.zeros((h, w), dtype=bool)
+    return np.isin(labels, keep)
 
 
 class PlasticImageSlicer:
@@ -74,7 +108,7 @@ class PlasticImageSlicer:
         overlap: int = 256,
         min_area_ratio: float = 0.05,
         discard_truncated: bool = False,
-        max_black_fraction: float = 0.5,
+        max_nodata_fraction: float = 0.25,
     ) -> None:
         """
         Args:
@@ -83,27 +117,18 @@ class PlasticImageSlicer:
             min_area_ratio: Ratio de surface minimale conservé pour un polygone tronqué (ex: 0.05 = 5%).
             discard_truncated: Si True, supprime les objets coupés par le bord.
                                Si False, recadre le polygone sur la bordure de la tuile.
-            max_black_fraction: Seuil (0-1) de fraction de pixels ~noirs au-delà duquel une
-                               tuile SANS OBJET ANNOTÉ est écartée plutôt que gardée comme
-                               exemple de fond (voir point 6 de la docstring du module -
-                               bordures de rotation d'orthomosaïque). N'affecte jamais une
-                               tuile contenant un objet annoté, qui est toujours gardée.
+            max_nodata_fraction: Fraction (0-1) de pixels nodata (voir compute_nodata_mask)
+                               au-delà de laquelle une tuile est écartée, qu'elle contienne
+                               un objet annoté ou non. 0,25 retenu le 24/09/2026 : perte
+                               mesurée de 1 % des objets (6 % sur les orthomosaïques SL), contre
+                               5,6 % (38 % sur les orthos SL) à tolérance 0.
         """
         self.tile_size = tile_size
         self.overlap = overlap
         self.stride = tile_size - overlap
         self.min_area_ratio = min_area_ratio
         self.discard_truncated = discard_truncated
-        self.max_black_fraction = max_black_fraction
-
-    def _black_fraction(self, tile_img: np.ndarray) -> float:
-        """Fraction de pixels ~noirs (BGR) dans une tuile - typiquement les triangles de
-        bordure issus d'une rotation d'orthomosaïque découpée à la main. Seuil <= 10 par
-        canal plutôt que 0 strict pour absorber le bruit de compression JPEG autour du noir."""
-        if tile_img.size == 0:
-            return 0.0
-        near_black = np.all(tile_img <= 10, axis=2)
-        return float(near_black.mean())
+        self.max_nodata_fraction = max_nodata_fraction
 
     def _load_yolo_labels(self, label_path: Union[str, Path], img_w: int, img_h: int) -> List[Dict]:
         """Lit un fichier YOLO-seg déjà dans l'espace de classes final (voir docstring
@@ -187,13 +212,10 @@ class PlasticImageSlicer:
                 coords_str = " ".join([f"{c:.6f}" for c in norm_coords])
                 tile_labels.append(f"{poly['class_id']} {coords_str}\n")
 
-            # Filtre anti-bordure noire : cette image (déjà <= tile_size, ex: une
-            # "imagette" pré-découpée) constitue elle-même sa seule et unique tuile.
-            # Si elle n'a aucun objet annoté ET qu'elle est majoritairement noire,
-            # elle ne vaut pas un exemple de fond utile - écartée entièrement (0
-            # tuile en sortie pour ce parent). Une tuile avec un objet annoté n'est
-            # jamais concernée.
-            if not tile_labels and self._black_fraction(img) > self.max_black_fraction:
+            # Filtre nodata : cette image (déjà <= tile_size) est sa propre et unique
+            # tuile - écartée entièrement si sa part de nodata dépasse le seuil, annotée
+            # ou non (voir compute_nodata_mask).
+            if compute_nodata_mask(img).mean() > self.max_nodata_fraction:
                 return 0
 
             cv2.imwrite(str(out_img_d / f"{prefix}.png"), img)
@@ -202,6 +224,10 @@ class PlasticImageSlicer:
             return 1
 
         polygons = self._load_yolo_labels(label_p, img_w, img_h)
+        # Masque nodata calculé UNE fois sur l'image parente entière (la connexité au bord
+        # n'a de sens qu'à cette échelle), puis image intégrale pour obtenir la part de
+        # nodata de chaque fenêtre en temps constant.
+        nodata_integral = np.pad(compute_nodata_mask(img).astype(np.int64), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
         tile_count = 0
         # Vrai si l'image PARENTE entière n'a aucun objet annoté (label absent, ou vide -
         # ex: une photo de terrain confirmée sans déchet). À distinguer d'une tuile
@@ -212,6 +238,14 @@ class PlasticImageSlicer:
 
         for x_start, y_start, x_end, y_end in iter_tile_windows(img_w, img_h, self.tile_size, self.stride):
             tile_img = img[y_start:y_end, x_start:x_end]
+            xe, ye = min(x_end, img_w), min(y_end, img_h)
+            n_nodata = (nodata_integral[ye, xe] - nodata_integral[y_start, xe]
+                        - nodata_integral[ye, x_start] + nodata_integral[y_start, x_start])
+            if n_nodata > self.max_nodata_fraction * max(1, (xe - x_start) * (ye - y_start)):
+                # Tuile majoritairement hors image (bordure noire) : écartée AVANT toute
+                # autre règle, annotée ou non - elle ne compte pas non plus dans le
+                # tirage des tuiles de fond ci-dessous.
+                continue
             tile_box = box(x_start, y_start, x_end, y_end)
             tile_boundary = tile_box.boundary
             tile_labels: List[str] = []
@@ -260,18 +294,15 @@ class PlasticImageSlicer:
             # d'une image qui contient par ailleurs des objets, sans exploser le
             # nombre de tuiles vides).
             #
-            # Filtre anti-bordure noire : une tuile SANS OBJET qui serait gardée par
-            # une des deux règles de fond ci-dessus (parent entièrement background,
-            # ou tirage 1/10) est en plus soumise au test de fraction noire - si elle
-            # dépasse le seuil, c'est très probablement un triangle de bordure de
-            # rotation d'orthomosaïque, pas un vrai exemple de fond de scène, et elle
-            # est écartée. Une tuile qui contient un objet annoté n'est jamais
-            # concernée par ce filtre (tile_labels non-vide -> keep_as_background
-            # jamais évalué).
+            # Précision (24/09/2026) : "1 tuile vide sur 10" est en réalité "une tuile vide
+            # gardée chaque fois que le nombre de tuiles DÉJÀ gardées est un multiple de 10" -
+            # soit au plus ~1 tuile vide pour 9 tuiles annotées, positionnellement. D'où
+            # seulement 1 à 6 % de tuiles vides à Santa Luzia et Aldabra. Comportement
+            # inchangé ici (le rééquilibrage positifs/négatifs relève de l'échantillonnage
+            # à l'entraînement, pas du tuilage).
             keep_as_background = False
             if not tile_labels:
-                would_keep = parent_is_all_background or (tile_count % 10 == 0)
-                keep_as_background = would_keep and self._black_fraction(tile_img) <= self.max_black_fraction
+                keep_as_background = parent_is_all_background or (tile_count % 10 == 0)
 
             if tile_labels or keep_as_background:
                 base_name = f"{prefix}_{x_start}_{y_start}"

@@ -118,9 +118,10 @@ from src.data.utils.class_config import (
 )
 from src.data.utils.raw_dataset import collect_parent_images
 
-RAW_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\1_annotated_dataset"
-OUTPUT_XLSX_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\dataset_diagnostic.xlsx"
-SPLIT_DIR_DEFAULT = r"E:\PixelOdyssey\3. Processed dataset\2_split_dataset"
+from src.paths_config import PROCESSED_DATASET_DIR
+RAW_DIR_DEFAULT = PROCESSED_DATASET_DIR / "1_annotated_dataset"
+OUTPUT_XLSX_DEFAULT = PROCESSED_DATASET_DIR / "dataset_diagnostic.xlsx"
+SPLIT_DIR_DEFAULT = PROCESSED_DATASET_DIR / "2_split_dataset"
 PARENT_MANIFEST_FILENAME = ".parent_manifest.json"  # même nom que split_dataset.py
 GSD_FIXE_CM_PAR_PX_DEFAULT = 0.6  # hypothèse unique, voir docstring du module
 

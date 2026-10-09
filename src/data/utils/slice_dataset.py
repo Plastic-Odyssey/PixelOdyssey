@@ -80,7 +80,7 @@ def _slicing_params(slicer: PlasticImageSlicer, augmented_dir: Path) -> Dict:
         "overlap": slicer.overlap,
         "min_area_ratio": slicer.min_area_ratio,
         "discard_truncated": slicer.discard_truncated,
-        "max_black_fraction": slicer.max_black_fraction,
+        "max_nodata_fraction": slicer.max_nodata_fraction,
         "upstream_augment_fingerprint": read_upstream_fingerprint(augmented_dir / AUGMENT_MANIFEST_FILENAME),
     }
 
@@ -90,10 +90,13 @@ def run_slice(force: bool = False, augmented_dir: str = AUGMENTED_DIR, sliced_di
     # La traduction des classes brutes -> super-classes cibles a lieu en amont, à
     # l'étape 2 (split_dataset.py, voir class_config.py) : les fichiers lus ici sont
     # déjà dans le référentiel final. Le slicer n'a donc pas de paramètre lié aux classes.
-    # max_black_fraction=0.5 : écarte une tuile de fond (sans objet annoté) dont plus de
-    # la moitié des pixels sont ~noirs - triangles de bordure de rotation d'orthomosaïque
-    # découpée à la main, pas de vrais exemples de fond de scène.
-    slicer = PlasticImageSlicer(tile_size=640, overlap=256, discard_truncated=False, max_black_fraction=0.5)
+    # max_nodata_fraction=0.25 (24/09/2026, remplace max_black_fraction=0.5 qui ne visait que
+    # les tuiles SANS objet et comptait aussi les pixels sombres de la scène) : écarte toute
+    # tuile, annotée ou non, dont plus d'un quart des pixels sont de la bordure noire
+    # (nodata connecté au bord de l'image - voir slicer.compute_nodata_mask). Perte mesurée
+    # sur les 561 images : 1 % des objets (6 % sur les orthomosaïques SL, 2 % à SB, 0 % sur
+    # les photos drone), contre 5,6 % à tolérance 0 (38 % des objets des orthos SL).
+    slicer = PlasticImageSlicer(tile_size=640, overlap=256, discard_truncated=False, max_nodata_fraction=0.25)
 
     augmented_dir_p = Path(augmented_dir)
 

@@ -11,10 +11,18 @@
 #
 # Générer le dataset tuilé correspondant (jamais mélangé avec le dataset
 # 7-classes principal - `path` ci-dessous pointe vers un dossier séparé) :
-#   python -m src.data.data_pipeline --config config/data_config_mono_class.yaml \
-#       --suffix _mono_class --balance-by items
+#   python -m src.data.data_pipeline --config config/data_config_mono_class.yaml --suffix _mono_class
 # Puis entraîner :
-#   python -m src.training.train --config config/data_config_mono_class.yaml --default-augment --tag mono_class_baseline
+#   python -m src.training.train --config config/data_config_mono_class.yaml --tag <étiquette>
+#
+# Corrigé le 23/09/2026 : cet en-tête recommandait `--balance-by items` et `--default-augment`.
+#   - `--balance-by items` donne un split DIFFÉRENT de celui du dataset multi-classe (plus de
+#     comparaison mono/multi sur les mêmes images test) et était défectueux jusqu'au 23/09/2026
+#     (images sans objet toutes envoyées en val/test) - le mode "images" (défaut) est celui de
+#     2_split_dataset_mono_class actuel et de reference_monoclasse_v2.
+#   - `--default-augment` remet degrees=0/flipud=0, c'est-à-dire désactive la correction "vue
+#     nadir" de train.py : les runs mono du 03/09 lancés ainsi sont moins bons que la recette
+#     réglée (F1 test 0,455 contre 0,519 sur le même test à l'époque).
 
 path: 3. Processed dataset/4_sliced_dataset_mono_class
 train: images/train

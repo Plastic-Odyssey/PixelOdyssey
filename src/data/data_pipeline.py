@@ -32,6 +32,14 @@ donc elle est signalée sans interrompre le run.
 Usage :
     python src/data/data_pipeline.py             # pipeline complet
     python src/data/data_pipeline.py --force      # + reconstruit les étapes dont la config a changé
+    python src/data/data_pipeline.py --dry-run    # analyse seulement : ce que le run ferait, rien n'est écrit
+
+Mise à jour incrémentale (23/09/2026) : une annotation corrigée/complétée sur une image
+DÉJÀ répartie est désormais détectée à l'étape 1 et propagée (copie du split mise à
+jour, puis copies/tuiles de ce parent invalidées et régénérées aux étapes 2 et 3) ; un
+parent disparu du brut est retiré. Avant, seul un changement de CONFIG déclenchait une
+reconstruction - `--force` compris - et une correction de label ne dépassait jamais
+1_annotated_dataset.
 
 Variante de taxonomie (ex: dataset expérimental "sans Debris_Divers") :
     python src/data/data_pipeline.py --config config/variants/data_config_no_debris.yaml --suffix _no_debris
@@ -76,7 +84,7 @@ from src.data.utils.dataset_sanity_check import PlasticDatasetChecker
 from src.data.utils.pipeline_utils import RunConfirmation
 from src.data.utils.raw_dataset_checker import RawDatasetValidator
 from src.data.utils.slice_dataset import SLICED_DIR, run_slice
-from src.data.utils.split_dataset import RAW_DIR, SPLIT_DIR, run_split
+from src.data.utils.split_dataset import RAW_DIR, SPLIT_DIR, _read_pending_purge, clear_pending_purge, run_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
@@ -84,6 +92,7 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "data_config.yaml"
 
 def _validate_config_suffix_pairing(
     config_path: str, suffix: str, raw_dir: str, site_filter: Optional[List[str]] = None,
+    inpaint_excluded: Optional[List[str]] = None,
 ) -> None:
     """Garde-fou : --config/--raw-dir/--site non défaut sans --suffix écraserait le dataset
     principal (2_split_dataset/3_augmented_dataset/4_sliced_dataset) avec une taxonomie, une
@@ -96,6 +105,8 @@ def _validate_config_suffix_pairing(
         non_default.append(f"--raw-dir pointe vers une donnée source non-défaut ({raw_dir})")
     if site_filter:
         non_default.append(f"--site filtre sur {','.join(site_filter)} (pas le dataset complet)")
+    if inpaint_excluded:
+        non_default.append(f"--inpaint-excluded efface {','.join(inpaint_excluded)} des images")
 
     if non_default and not suffix:
         raise RuntimeError(
@@ -133,9 +144,38 @@ def _post_stage_check(label: str, base_path: str) -> None:
         print(f"✅ {label} : rien à signaler.")
 
 
+def _purge_downstream(parent_ids, augmented_dir: str, sliced_dir: str) -> None:
+    """Supprime, dans 3_augmented_dataset<suffix> et 4_sliced_dataset<suffix>, les fichiers
+    des parents donnés (copie exacte `<pid>.*` ou tuiles `<pid>_*`) pour forcer leur
+    régénération par les étapes incrémentales suivantes."""
+    if not parent_ids:
+        return
+    n_removed = 0
+    for base in (Path(augmented_dir), Path(sliced_dir)):
+        for kind in ("images", "labels"):
+            for split in ("train", "val", "test"):
+                d = base / kind / split
+                if not d.exists():
+                    continue
+                for f in d.iterdir():
+                    if not f.is_file():
+                        continue
+                    # Le parent d'une tuile "<pid>_<x>_<y>" est obtenu en retirant les 2 derniers
+                    # segments ; une copie simple porte le parent_id tel quel.
+                    stem = f.stem
+                    parts = stem.rsplit("_", 2)
+                    tile_parent = parts[0] if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit() else None
+                    if stem in parent_ids or tile_parent in parent_ids:
+                        f.unlink()
+                        n_removed += 1
+    print(f"🔁 {len(parent_ids)} parent(s) modifié(s)/retiré(s) au split : {n_removed} fichier(s) en aval "
+          f"(augmentation/tuiles) invalidé(s), régénérés ci-dessous.")
+
+
 def run_full_pipeline(
     force: bool = False, config_path: str = str(CONFIG_PATH), suffix: str = "", raw_dir: str = RAW_DIR,
-    balance_by: str = "images", site_filter: Optional[List[str]] = None,
+    balance_by: str = "items", site_filter: Optional[List[str]] = None,
+    inpaint_excluded: Optional[List[str]] = None, dry_run: bool = False, allow_mass_removal: bool = False,
 ) -> None:
     """`config_path`/`suffix` : voir la docstring du module ("Variante de taxonomie"). `raw_dir` :
     voir "Variante de donnée brute" (ex: 1bis_corrected_annotation produit par
@@ -145,7 +185,7 @@ def run_full_pipeline(
     à split_dataset.py (voir raw_dataset.site_of_batch pour la convention de code de site).
     Défauts inchangés (config/donnée/sites principaux, aucun suffixe) -> comportement
     strictement identique à avant l'ajout de ces paramètres."""
-    _validate_config_suffix_pairing(config_path, suffix, raw_dir, site_filter)
+    _validate_config_suffix_pairing(config_path, suffix, raw_dir, site_filter, inpaint_excluded)
     split_dir = SPLIT_DIR + suffix
     augmented_dir = AUGMENTED_DIR + suffix
     sliced_dir = SLICED_DIR + suffix
@@ -172,11 +212,29 @@ def run_full_pipeline(
     print("\n" + "=" * 70)
     print(f"ÉTAPE 1/4 — SPLIT TRAIN / VAL / TEST -> {split_dir}")
     print("=" * 70)
-    run_split(
+    split_changes = run_split(
         force=force, raw_dir=raw_dir, split_dir=split_dir, class_config_path=config_path,
         run_confirmation=run_confirmation, balance_by=balance_by, site_filter=site_filter,
-    )
+        inpaint_excluded=inpaint_excluded, dry_run=dry_run, allow_mass_removal=allow_mass_removal,
+    ) or {}
+    if dry_run:
+        print("\n🔎 [dry-run] Arrêt après l'analyse du split : aucune étape n'a rien écrit. Relance sans "
+              "--dry-run pour appliquer (les parents mis à jour seront aussi régénérés en aval).")
+        return
     _post_stage_check(Path(split_dir).name, split_dir)
+    # Invalidation CIBLÉE en aval (23/09/2026) : les parents dont le label/l'image a changé,
+    # ou qui ont disparu, ne doivent plus être servis par le cache incrémental des étapes
+    # 2 et 3 (qui sautent tout parent déjà présent) - on retire leurs copies/tuiles, qui
+    # seront régénérées juste après. Les autres parents ne sont pas touchés. La liste vient
+    # d'un journal écrit par run_split AVANT toute modification (voir PENDING_PURGE_FILENAME) :
+    # il n'est vidé qu'une fois la purge faite, donc rien n'est perdu si ce run est interrompu.
+    # Relu depuis le journal lui-même (pas depuis la valeur de retour) : même si run_split
+    # s'est arrêté tôt (aucune image brute trouvée...), un reliquat d'un run précédent n'est
+    # jamais effacé sans avoir été traité.
+    pending = set(_read_pending_purge(Path(split_dir))) | set(split_changes.get("pending_purge", []))
+    if pending:
+        _purge_downstream(pending, augmented_dir, sliced_dir)
+        clear_pending_purge(split_dir)
 
     print("\n" + "=" * 70)
     print(f"ÉTAPE 2/4 — AUGMENTATION (train uniquement, val/test inchangés) -> {augmented_dir}")
@@ -231,11 +289,11 @@ if __name__ == "__main__":
              "dataset principal.",
     )
     parser.add_argument(
-        "--balance-by", choices=["images", "items"], default="images",
+        "--balance-by", choices=["images", "items"], default="items",
         help="Transmis tel quel à split_dataset.py (étape 1) - voir son --balance-by. "
-             "'items' équilibre train/val/test par nombre d'instances annotées plutôt que "
-             "par nombre d'images (utile pour un dataset mono-classe ou très hétérogène en "
-             "densité de déchets par image).",
+             "'items' (défaut depuis le 24/09/2026) équilibre train/val/test par nombre "
+             "d'annotations plutôt que par nombre d'images ; 'images' reproduit l'ancien "
+             "comportement (déséquilibré en objets sur ce dataset).",
     )
     parser.add_argument(
         "--site", default=None,
@@ -244,12 +302,32 @@ if __name__ == "__main__":
              "docstring du module. Défaut : aucun filtre, tous les sites. Fournis AUSSI "
              "--suffix dès que --site est utilisé.",
     )
+    parser.add_argument(
+        "--inpaint-excluded", default=None,
+        help="(Variante expérimentale, 23/09/2026) Classes BRUTES exclues à EFFACER des images par "
+             "inpainting au lieu de les laisser visibles comme du fond, séparées par des virgules - "
+             "ex: --inpaint-excluded \"Inconnu,à déterminer\" --suffix _ign. Fournis AUSSI --suffix. "
+             "Voir split_dataset._inpaint_excluded_copy.",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Analyse seulement (23/09/2026) : affiche ce que le split ferait - nouveaux parents, parents "
+             "mis à jour (annotation/image modifiée), fichiers périmés à retirer, reconstruction complète "
+             "éventuelle - puis s'arrête sans rien écrire. Recommandé après chaque mise à jour du code.",
+    )
+    parser.add_argument(
+        "--allow-mass-removal", action="store_true",
+        help="Lève le garde-fou qui refuse de retirer plus de 20 %% des parents présents d'un coup "
+             "(indépendant de --force).",
+    )
     args = parser.parse_args()
     site_filter = [s.strip() for s in args.site.split(",")] if args.site else None
+    inpaint_excluded = [s.strip() for s in args.inpaint_excluded.split(",")] if args.inpaint_excluded else None
     try:
         run_full_pipeline(
             force=args.force, config_path=args.config, suffix=args.suffix, raw_dir=args.raw_dir,
-            balance_by=args.balance_by, site_filter=site_filter,
+            balance_by=args.balance_by, site_filter=site_filter, inpaint_excluded=inpaint_excluded,
+            dry_run=args.dry_run, allow_mass_removal=args.allow_mass_removal,
         )
     except RuntimeError as e:
         print(str(e))
