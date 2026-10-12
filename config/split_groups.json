@@ -1,6 +1,6 @@
 {
  "note": "Groupes d'images parentes qui se recouvrent sur le terrain : split_dataset.py place chaque groupe entier dans un seul split. Généré par src/data/diagnostics/spatial_groups.py - ne pas éditer à la main, relancer après l'ajout d'un lot.",
- "generated": "2026-10-08",
+ "generated": "2026-10-09",
  "rules": {
   "block_cells": 4,
   "min_ortho_overlap": 0.02,

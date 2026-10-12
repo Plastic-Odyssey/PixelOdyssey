@@ -1,0 +1,31 @@
+# PixelOdyssey - modèles proposés dans l'application (python -m src.app).
+#
+# Indépendant de config/models_registry.yaml (outils d'analyse historiques) : ici, chaque
+# modèle est un fichier de poids COPIÉ dans models/app/ (dossier ignoré par git), pour que
+# l'application ne dépende ni du disque de données ni des dossiers de runs.
+#
+# Champs :
+#   id          identifiant court (noms de fichiers de sortie)
+#   nom         libellé affiché
+#   description une ou deux phrases pour choisir
+#   poids       chemin relatif à la racine du dépôt
+#   seuil       seuil de confiance par défaut (réglable ensuite dans les résultats)
+#   gsd_min_cm / gsd_max_cm : plage de résolution au sol vue à l'entraînement (avertissement hors plage)
+#   source      run d'origine (traçabilité)
+models:
+  - id: mono_20261008
+    nom: "Déchets plastiques (1 classe)"
+    description: "Le plus fiable pour compter et mesurer : retrouve ~55 % des déchets du banc de test (F1 0,545 sur 82 images). Ne distingue pas les types ; le poids utilise une densité moyenne."
+    poids: models/app/mono_20261008.pt
+    seuil: 0.25
+    gsd_min_cm: 0.28
+    gsd_max_cm: 0.78
+    source: campagne_20261008_full_mono_yolo11n-seg_20261008_211021
+  - id: multi_20261008
+    nom: "Types de déchets (7 classes)"
+    description: "Bouteilles, bidons, cagettes, bouées, tongs, cordages, débris : poids estimé selon le type. Moins de détections que le modèle 1 classe (F1 0,40 au seuil 0,15)."
+    poids: models/app/multi_20261008.pt
+    seuil: 0.15
+    gsd_min_cm: 0.28
+    gsd_max_cm: 0.78
+    source: campagne_20261008_full_multi_yolo11n-seg_20261009_183305
