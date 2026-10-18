@@ -78,6 +78,7 @@ from src.data.utils.class_config import (
     EXCLUDE, load_batch_local_names, load_class_config, normalize_class_name, resolve_class_name,
 )
 from src.data.utils.image_io import load_image_bgr
+from src.data.utils.slicer import compute_nodata_mask
 from src.data.utils.raw_dataset import site_of_batch
 from src.data.utils.split_dataset import PARENT_MANIFEST_FILENAME
 from src.data.utils.tiling_geometry import iter_tile_windows
@@ -87,6 +88,62 @@ from src.review.tiled_inference import nms_merge
 from src.training.training_report import resolve_run_class_config_path
 
 CONF_FLOOR = 0.05  # plancher de confiance pour tracer la courbe P/R (AP50, F1 max)
+
+# Classes de taille des objets (plus grande dimension, en pixels ; ~0,5 cm/px sur ce jeu de données),
+# pour le rappel par taille (17/10/2026).
+SIZE_BINS = [(0, 25, "< 25 px (~12 cm)"), (25, 40, "25-40 px"), (40, 60, "40-60 px"), (60, 100, "60-100 px"),
+             (100, float("inf"), "> 100 px (~50 cm)")]
+NODATA_PRED_FRACTION = 0.5  # prédiction écartée si au moins la moitié tombe sur la bordure noire d'une ortho
+
+
+def _nodata_fraction(geom, nodata) -> float:
+    """Part de la surface d'une prédiction qui tombe sur du nodata (bordure noire d'orthomosaïque)."""
+    import cv2
+    x0, y0, x1, y1 = (int(v) for v in geom.bounds)
+    h, w = nodata.shape
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1 + 1), min(h, y1 + 1)
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    m = np.zeros((y1 - y0, x1 - x0), np.uint8)
+    cv2.fillPoly(m, [np.round(np.asarray(geom.exterior.coords) - [x0, y0]).astype(np.int32)], 1)
+    n = int(m.sum())
+    return float((nodata[y0:y1, x0:x1] & (m > 0)).sum()) / n if n else 0.0
+
+
+def size_recall(records: List[Dict], conf: float) -> List[Dict]:
+    """Rappel par classe de taille au seuil `conf` (rapports produits depuis le 17/10/2026 : champ "gts")."""
+    out = []
+    for lo, hi, label in SIZE_BINS:
+        n = found = 0
+        for r in records:
+            for _, size, _, mconf in r.get("gts", []):
+                if lo <= size < hi:
+                    n += 1
+                    found += mconf >= conf
+        out.append({"classe_taille": label, "n": n, "rappel": found / n if n else float("nan")})
+    return out
+
+
+def surface_metrics(records: List[Dict], conf: float) -> Dict:
+    """Mesures en SURFACE (approximation du poids), au seuil `conf` : part de la surface des déchets annotés
+    retrouvée, et surface des fausses alertes rapportée à la surface des vraies détections."""
+    a_gt = a_found = a_tp = a_fond = a_obj = 0.0
+    for r in records:
+        for _, _, area, mconf in r.get("gts", []):
+            a_gt += area
+            a_found += area if mconf >= conf else 0.0
+        for p in r["preds"]:
+            if len(p) < 5 or p[0] < conf:
+                continue
+            if p[2] == 1:
+                a_tp += p[3]
+            elif p[4] == "fond":
+                a_fond += p[3]
+            elif p[4] == "objet":
+                a_obj += p[3]
+    return {"surface_retrouvee": a_found / a_gt if a_gt else float("nan"),
+            "fausses_alertes_fond_sur_vrais": a_fond / a_tp if a_tp else float("nan"),
+            "doublons_fragments_sur_vrais": a_obj / a_tp if a_tp else float("nan")}
 
 
 def ios_merge(preds: List[LabeledPolygon], thr: float = 0.5) -> List[LabeledPolygon]:
@@ -292,6 +349,13 @@ def run_object_level_eval(run_dir, split: str = "test", conf: float = 0.25, merg
                         continue
                     preds.append(LabeledPolygon(int(c), g, float(cf)))
         preds = ios_merge(preds) if merge == "ios" else nms_merge(preds, iou_threshold=0.5)
+        # Prédictions sur la bordure noire d'une orthomosaïque (17/10/2026) : artefact de l'image de test,
+        # absent des photos traitées par l'application - écartées pour tous les modèles.
+        nodata = compute_nodata_mask(img)
+        n_nodata = 0
+        if nodata.any():
+            kept = [p for p in preds if _nodata_fraction(p.geom, nodata) < NODATA_PRED_FRACTION]
+            n_nodata, preds = len(preds) - len(kept), kept
         preds.sort(key=lambda p: -p.confidence)
         zones = _excluded_zones(info, class_taxonomy, w, h)
         n_ignored = 0
@@ -302,6 +366,7 @@ def run_object_level_eval(run_dir, split: str = "test", conf: float = 0.25, merg
             preds = kept_preds
 
         used = [False] * len(gts)
+        gt_conf = [-1.0] * len(gts)  # confiance de la prédiction qui a retrouvé chaque objet (-1 : jamais)
         tree = STRtree([g.geom for g in gts]) if gts else None
         matched = []
         for p in preds:
@@ -316,26 +381,39 @@ def run_object_level_eval(run_dir, split: str = "test", conf: float = 0.25, merg
                         best, bj = iou, j
             if best >= 0.5:
                 used[bj] = True
+                gt_conf[bj] = p.confidence
                 matched.append((p.confidence, p.class_id, 1))
             else:
                 matched.append((p.confidence, p.class_id, 0))
 
+        # Zone de chaque prédiction non appariée (toutes, quel que soit le seuil, depuis le 17/10/2026 :
+        # permet de recalculer les fausses alertes et les surfaces à n'importe quel seuil).
         fp_zone: Dict[str, int] = {}
+        detailed = []
         for p, m in zip(preds, matched):
-            if m[2] == 1 or m[0] < conf:
-                continue
+            if m[2] == 1:
+                code = "vp"
             # Part de la PRÉDICTION couverte (pas de la plus petite des deux géométries) : une
             # grande fausse détection qui effleure un petit objet n'est pas "sur" cet objet.
-            if any(_frac_of_pred(p.geom, g.geom) >= 0.5 for g in gts):
-                zone = "objet annoté (doublon, fragment ou autre classe)"
+            elif any(_frac_of_pred(p.geom, g.geom) >= 0.5 for g in gts):
+                code = "objet"
             else:
-                zone = next((name for name, g in zones if _frac_of_pred(p.geom, g) >= 0.5), "fond")
+                code = next((name for name, g in zones if _frac_of_pred(p.geom, g) >= 0.5), "fond")
+            detailed.append((m[0], m[1], m[2], round(float(p.geom.area), 1), code))
+            if m[2] == 1 or m[0] < conf:
+                continue
+            zone = "objet annoté (doublon, fragment ou autre classe)" if code == "objet" else code
             fp_zone[zone] = fp_zone.get(zone, 0) + 1
+        gts_detail = []
+        for g, c in zip(gts, gt_conf):
+            x0, y0, x1, y1 = g.geom.bounds
+            gts_detail.append((g.class_id, round(max(x1 - x0, y1 - y0), 1), round(float(g.geom.area), 1), round(c, 4)))
         n_gt: Dict[int, int] = {}
         for g in gts:
             n_gt[g.class_id] = n_gt.get(g.class_id, 0) + 1
-        records.append({"parent_id": pid, "site": site_of_batch(info["batch"]), "preds": matched,
-                        "n_gt": n_gt, "fp_by_zone": fp_zone, "n_ignored_preds": n_ignored})
+        records.append({"parent_id": pid, "site": site_of_batch(info["batch"]), "preds": detailed,
+                        "n_gt": n_gt, "fp_by_zone": fp_zone, "n_ignored_preds": n_ignored,
+                        "n_nodata_preds": n_nodata, "gts": gts_detail})
         print(f"  [{k_parent}/{len(parents)}] {pid}: {sum(n_gt.values())} objets, {len(preds)} prédictions")
 
     if not records:

@@ -1,0 +1,100 @@
+# PixelOdyssey - Configuration du dataset mono-classe - PROTOCOLE v4 (12/10/2026)
+#
+# Construit par :   python -m src.data.data_pipeline --config config/data_config_mono_v4.yaml --suffix _mono_v4
+# Entraîné par :    python -m src.training.train --config config/data_config_mono_v4.yaml --recette v4 --model yolo11s-seg.pt
+# (ou tout en un : python -m src.training.campagne_v4)
+#
+# Différences avec data_config_mono_class.yaml (voir le journal de décisions, 12/10/2026) :
+#   - "à déterminer" compte comme déchet (planches de contrôle : ce sont des déchets dont seul le type
+#     est incertain) ; "Inconnu" reste exclu MAIS est effacé des images de train/val (zone ni positive ni
+#     négative) au lieu d'être appris comme du fond ; en test il devient une zone ignorée à l'évaluation ;
+#   - tuilage 640 px / recouvrement 128 px, zéro noir artificiel avec fenêtres de rattrapage ;
+#   - 10 % de tuiles sans déchet en train, réparties par site ; val/test complets ;
+#   - terrain partagé entre deux splits noirci dans le split le moins prioritaire, contrôle d'étanchéité bloquant.
+
+path: 3. Processed dataset/4_sliced_dataset_mono_v4
+train: images/train
+val: images/val
+test : images/test
+
+# ============================================================================
+# TAXONOMIE CIBLE : une seule classe - on ne cherche plus à distinguer QUOI,
+# seulement SI un déchet plastique est présent.
+# ============================================================================
+names:
+  0: Dechet_Plastique
+
+# ============================================================================
+# RÉFÉRENTIEL DE CLASSES - mêmes clés que config/data_config.yaml (le nom brut
+# annoté par chaque lot ne change pas), mais TOUTES pointent vers la même
+# classe cible 0 au lieu de 7 super-classes séparées. `class_aliases`
+# ci-dessous est repris À L'IDENTIQUE (ces divergences d'orthographe entre
+# lots existent indépendamment du nombre de super-classes).
+#
+# Décisions reprises À L'IDENTIQUE du référentiel 7-classes, PAS changées
+# sans raison :
+#   - "Morceaux de bois", "Verre" restent exclus : matière confirmée NON
+#     plastique - le critère d'exclusion "est-ce du plastique ?" reste valide
+#     ici, contrairement au critère de forme qui n'a plus de sens.
+#   - "à déterminer" COMPTE comme déchet (protocole v4, 12/10/2026) : sur les planches de contrôle
+#     (5. Tests/protocole_v4_20261012/a_determiner_SL.jpg), ce sont des déchets dont seul le type
+#     est incertain.
+#   - "Inconnu" reste exclu (75 % des objets de Saint-Brandon, souvent des coquillages ou du corail
+#     blanc d'environ 12 cm ; l'inclure a fait chuter Saint-Brandon de 0,55 à 0,34 le 08/10) MAIS il est
+#     effacé des images de train/val (ni positif ni fond) et ignoré à l'évaluation du test.
+# ============================================================================
+
+class_taxonomy:
+  "bouteille PET": 0
+  "Bouteille Plastique rigide": 0
+  "fliflops": 0
+  "cagette": 0
+  "Bouées": 0
+  "Bouées pieuvre": 0
+  "flotteurs": 0
+  "Cordage": 0
+  "Petit bidon": 0
+  "Sceau": 0
+  "Plastique souple (sac)": 0
+  "Mousse expansée": 0
+  "Polystyrene": 0
+  "Fragments plastique rigide": 0
+  "Tissu": 0
+  "casques": 0
+  "bouchons": 0
+  "Morceaux de bois": exclude
+  "Verre": exclude
+  "à déterminer": 0   # protocole v4 : déchet de type incertain
+  "Inconnu": exclude       # protocole v4 : effacé en train/val, zone ignorée en test
+
+  # Auto-mapping des super-classes 7-classes vers elles-mêmes (nécessaire
+  # UNIQUEMENT pour bootstrap_annotate.py - voir la même section dans
+  # data_config.yaml) : toutes vers la classe unique 0 ici aussi.
+  "Bouteille": 0
+  "Flipflops": 0
+  "Cagette": 0
+  "Bouee": 0
+  "Cordage_Filet": 0
+  "Bidon": 0
+  "Debris_Divers": 0
+
+# Identique à data_config.yaml - ces divergences d'orthographe entre lots ne
+# dépendent pas du nombre de super-classes.
+class_aliases:
+  "flipflops": "fliflops"
+  "bouteilles_pet": "bouteille PET"
+  "bouteilles_plastique_rigide": "Bouteille Plastique rigide"
+
+# ============================================================================
+# PROTOCOLE v4 : réglages de construction du dataset (lus par data_pipeline.py)
+# ============================================================================
+protocole_v4:
+  effacer_classes: ["Inconnu"]          # effacées (inpainting) des images de train/val
+  effacer_dans: ["train", "val"]        # le test garde les images d'origine
+  masquer_terrain_partage: true         # voir src/data/utils/ground_overlap.py
+  tuile_px: 640
+  recouvrement_px: 128
+  noir_max: 0.0                         # part de noir artificiel tolérée par tuile
+  fenetres_rattrapage: true
+  part_tuiles_sans_dechet_train: 0.10
+  contre_exemples: ["Morceaux de bois", "Verre"]   # tuiles gardées en train même sans déchet

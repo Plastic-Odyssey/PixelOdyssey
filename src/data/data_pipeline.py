@@ -172,6 +172,88 @@ def _purge_downstream(parent_ids, augmented_dir: str, sliced_dir: str) -> None:
           f"(augmentation/tuiles) invalidé(s), régénérés ci-dessous.")
 
 
+def load_v4_settings(config_path) -> Optional[dict]:
+    """Section `protocole_v4` d'un data_config (None si absente : pipeline historique)."""
+    import yaml
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    v4 = cfg.get("protocole_v4")
+    if not v4:
+        return None
+    defaults = {"effacer_classes": [], "effacer_dans": ["train", "val"], "masquer_terrain_partage": True,
+                "tuile_px": 640, "recouvrement_px": 128, "noir_max": 0.0, "fenetres_rattrapage": True,
+                "part_tuiles_sans_dechet_train": 0.10, "contre_exemples": []}
+    unknown = set(v4) - set(defaults)
+    if unknown:
+        raise RuntimeError(f"{config_path} : clé(s) inconnue(s) dans protocole_v4 : {sorted(unknown)}")
+    return {**defaults, **v4}
+
+
+def run_full_pipeline_v4(
+    v4: dict, force: bool = False, config_path: str = str(CONFIG_PATH), suffix: str = "", raw_dir: str = RAW_DIR,
+    dry_run: bool = False, allow_mass_removal: bool = False,
+) -> None:
+    """Protocole v4 (12/10/2026) : vérification -> split (effacement train/val, terrain partagé noirci)
+    -> tuilage v4 (zéro noir, fenêtres de rattrapage, tuiles vides du train limitées) -> contrôle
+    d'étanchéité bloquant. Pas d'étape « augmentation » (c'était une simple copie)."""
+    from src.data.diagnostics.leak_check import run_leak_check
+    from src.data.utils.slice_dataset_v4 import run_slice_v4
+
+    if not suffix:
+        raise RuntimeError("🛑 Protocole v4 : fournis --suffix (ex: _v4) pour ne pas écraser le dataset principal.")
+    split_dir = SPLIT_DIR + suffix
+    sliced_dir = SLICED_DIR + suffix
+    run_confirmation = RunConfirmation()
+
+    print("=" * 70)
+    print(f"PROTOCOLE v4 — ÉTAPE 0/3 — VÉRIFICATION DU DATASET BRUT ({raw_dir})")
+    print("=" * 70)
+    validator = RawDatasetValidator(raw_dir, str(config_path))
+    if not validator.run_all():
+        print(f"\n🛑 PIPELINE ARRÊTÉ : dataset brut inexploitable ({len(validator.problems)} problème(s) ci-dessus).")
+        sys.exit(1)
+
+    print("\n" + "=" * 70)
+    print(f"ÉTAPE 1/3 — SPLIT TRAIN / VAL / TEST -> {split_dir}")
+    print("=" * 70)
+    run_split(
+        force=force, raw_dir=raw_dir, split_dir=split_dir, class_config_path=config_path,
+        run_confirmation=run_confirmation, balance_by="items",
+        inpaint_excluded=v4["effacer_classes"] or None, inpaint_splits=v4["effacer_dans"],
+        mask_shared_ground=bool(v4["masquer_terrain_partage"]), dry_run=dry_run, allow_mass_removal=allow_mass_removal,
+    )
+    if dry_run:
+        print("\n🔎 [dry-run] Arrêt après l'analyse du split : rien n'a été écrit.")
+        return
+    clear_pending_purge(split_dir)  # le tuilage v4 n'est pas incrémental : il repart du split complet
+    _post_stage_check(Path(split_dir).name, split_dir)
+
+    print("\n" + "=" * 70)
+    print(f"ÉTAPE 2/3 — TUILAGE v4 ({v4['tuile_px']} px, recouvrement {v4['recouvrement_px']} px, "
+          f"noir toléré {v4['noir_max']:.0%}) -> {sliced_dir}")
+    print("=" * 70)
+    run_slice_v4(
+        split_dir, sliced_dir, str(config_path), tile_size=int(v4["tuile_px"]), tile_overlap=int(v4["recouvrement_px"]),
+        max_nodata_fraction=float(v4["noir_max"]), rescue_windows=bool(v4["fenetres_rattrapage"]),
+        train_negative_fraction=float(v4["part_tuiles_sans_dechet_train"]),
+        hard_negative_classes=v4["contre_exemples"], raw_dir=raw_dir, force=force, run_confirmation=run_confirmation,
+    )
+    _post_stage_check(Path(sliced_dir).name, sliced_dir)
+
+    print("\n" + "=" * 70)
+    print("ÉTAPE 3/3 — CONTRÔLE D'ÉTANCHÉITÉ (bloquant)")
+    print("=" * 70)
+    res = run_leak_check(split_dir, sliced_dir)
+    if not res["ok"]:
+        raise RuntimeError(f"🛑 Fuite détectée entre splits ({res['n_problemes']} problème(s)) - dataset NON utilisable. "
+                           f"Détail : {Path(sliced_dir) / '.leak_check.json'}")
+    print("\n" + "=" * 70)
+    print("✅ PIPELINE v4 TERMINÉ")
+    print(f"   Dataset prêt pour l'entraînement : {sliced_dir}")
+    print(f"   Entraînement : python -m src.training.train --config {config_path} --recette v4")
+    print("=" * 70)
+
+
 def run_full_pipeline(
     force: bool = False, config_path: str = str(CONFIG_PATH), suffix: str = "", raw_dir: str = RAW_DIR,
     balance_by: str = "items", site_filter: Optional[List[str]] = None,
@@ -185,6 +267,13 @@ def run_full_pipeline(
     à split_dataset.py (voir raw_dataset.site_of_batch pour la convention de code de site).
     Défauts inchangés (config/donnée/sites principaux, aucun suffixe) -> comportement
     strictement identique à avant l'ajout de ces paramètres."""
+    v4 = load_v4_settings(config_path)
+    if v4 is not None:
+        if site_filter or inpaint_excluded or balance_by != "items":
+            raise RuntimeError("🛑 Protocole v4 : --site, --inpaint-excluded et --balance-by se règlent dans la "
+                               "section protocole_v4 du fichier de configuration, pas en ligne de commande.")
+        return run_full_pipeline_v4(v4, force=force, config_path=config_path, suffix=suffix, raw_dir=raw_dir,
+                                    dry_run=dry_run, allow_mass_removal=allow_mass_removal)
     _validate_config_suffix_pairing(config_path, suffix, raw_dir, site_filter, inpaint_excluded)
     split_dir = SPLIT_DIR + suffix
     augmented_dir = AUGMENTED_DIR + suffix

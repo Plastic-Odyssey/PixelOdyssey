@@ -476,6 +476,21 @@ def remap_renamed_frozen(dry_run: bool = False) -> Path:
                 size_ref = copy.stat().st_size if copy is not None and copy.exists() else None
                 if size_ref is None or img.stat().st_size == size_ref:
                     candidates.append(p["parent_id"])
+        if not candidates and info is not None:
+            # Fichier renommé À L'INTÉRIEUR d'un lot (12/10/2026 : "transect26.png" -> "transect_26.png"
+            # lors d'une réexportation CVAT) : même site, même taille ET même contenu (SHA-1) que la
+            # copie de l'image figée encore présente dans 2_split_dataset.
+            copy = Path(SPLIT_DIR) / "images" / info["split"] / f"{pid}{old_img.suffix.lower()}" if old_img else None
+            if copy is not None and copy.exists():
+                import hashlib
+                ref_size = copy.stat().st_size
+                ref_sha = hashlib.sha1(copy.read_bytes()).hexdigest()
+                for p in parents:
+                    if p["parent_id"] in ids or site_of_batch(p["batch"]) != site_of_batch(info["batch"]):
+                        continue
+                    img = Path(p["img_path"])
+                    if img.stat().st_size == ref_size and hashlib.sha1(img.read_bytes()).hexdigest() == ref_sha:
+                        candidates.append(p["parent_id"])
         if len(candidates) == 1:
             remap[pid] = candidates[0]
         else:

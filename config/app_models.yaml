@@ -29,3 +29,19 @@ models:
     gsd_min_cm: 0.28
     gsd_max_cm: 0.78
     source: campagne_20261008_full_multi_yolo11n-seg_20261009_183305
+  - id: multi_20261012
+    nom: "Types de déchets (7 classes) - 12/10"
+    description: "Protocole v4 (annotations corrigées, découpage étanche, modèle small) : F1 0,457 contre 0,416 pour le modèle du 08/10 sur le même banc ; meilleur sur bouteilles, bidons et débris. Environ 3 fois plus lent."
+    poids: models/app/multi_20261012.pt
+    seuil: 0.375
+    gsd_min_cm: 0.28
+    gsd_max_cm: 0.78
+    source: campagne_v4_20261012_v4_multi_s_yolo11s-seg_20261012_215100
+  - id: mono_20261012
+    nom: "Déchets plastiques (1 classe) - 12/10"
+    description: "Protocole v4 : même F1 global que le modèle du 08/10 (0,57), mais retrouve plus de petits objets (moins de 12 cm) au prix de plus de fausses alertes sur cailloux et coquillages. À comparer sur vos vols."
+    poids: models/app/mono_20261012.pt
+    seuil: 0.325
+    gsd_min_cm: 0.28
+    gsd_max_cm: 0.78
+    source: campagne_v4_20261012_v4_mono_n_yolo11n-seg_20261013_001105

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixelOdyssey</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/static/vendor/leaflet.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="panel" id="panel">
+    <header class="brand">
+      <div class="eyebrow"><b>PixelOdyssey</b> · détection de déchets plastiques par drone</div>
+      <div class="device" id="device" title="Matériel utilisé pour la détection">…</div>
+    </header>
+
+    <!-- 1. Photos -->
+    <section class="step" id="step-photos" data-state="active">
+      <h2><span class="num">1</span>Photos du vol</h2>
+      <div class="summary" id="step-photos-sum"></div>
+      <div class="step-body">
+        <div class="row">
+          <button class="btn primary" id="btn-pick">Choisir un dossier…</button>
+          <button class="btn ghost" id="btn-open-existing" title="Afficher un traitement déjà réalisé">Ouvrir des résultats…</button>
+        </div>
+        <div class="path-row">
+          <input id="folder" type="text" placeholder="ou coller le chemin du dossier, ex. E:\PixelOdyssey\2. Raw data\…" spellcheck="false">
+          <button class="btn" id="btn-scan">Analyser</button>
+        </div>
+        <div class="drop" id="drop">
+          <strong>Déposer les photos ici</strong>
+          <span>JPG d'origine du drone (les PNG perdent la position GPS)</span>
+          <div class="upload" id="upload" hidden><div class="bar"><span id="upload-bar"></span></div><small id="upload-txt"></small></div>
+        </div>
+        <div class="recents" id="recents"></div>
+        <div class="msg error" id="scan-error" hidden></div>
+        <div id="scan-result" hidden>
+          <div class="tiles small" id="scan-tiles"></div>
+          <ul class="alerts" id="scan-alerts"></ul>
+          <div class="msg info" id="already" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Modèle -->
+    <section class="step" id="step-model" data-state="locked">
+      <h2><span class="num">2</span>Modèle de reconnaissance</h2>
+      <div class="summary" id="step-model-sum"></div>
+      <div class="step-body">
+        <div class="models" id="models"></div>
+        <label class="field">Dossier des résultats
+          <input id="outdir" type="text" spellcheck="false">
+        </label>
+        <button class="btn primary big" id="btn-run" disabled>Lancer le traitement</button>
+      </div>
+    </section>
+
+    <!-- 3. Traitement -->
+    <section class="step" id="step-run" data-state="locked">
+      <h2><span class="num">3</span>Traitement</h2>
+      <div class="summary" id="step-run-sum"></div>
+      <div class="step-body">
+        <div class="progress"><span id="prog-bar"></span></div>
+        <div class="prog-line"><b id="prog-pct">0 %</b><span id="prog-msg">En attente</span></div>
+        <div class="prog-time" id="prog-time"></div>
+        <ol class="stages" id="stages"></ol>
+        <pre class="log" id="log"></pre>
+        <div class="msg error" id="run-error" hidden></div>
+        <button class="btn ghost" id="btn-cancel">Annuler</button>
+      </div>
+    </section>
+
+    <!-- 4. Résultats -->
+    <section class="step" id="step-results" data-state="locked">
+      <h2><span class="num">4</span>Résultats</h2>
+      <div class="summary" id="step-results-sum"></div>
+      <div class="step-body">
+        <div class="msg warn" id="align-warn" hidden></div>
+        <div class="tiles" id="res-tiles"></div>
+        <div class="slider">
+          <div class="slider-head"><label for="conf">Seuil de confiance</label><b id="conf-val">25 %</b></div>
+          <input type="range" id="conf" min="0.05" max="0.9" step="0.05" value="0.25">
+          <p class="hint" id="conf-hint">Plus haut : moins de détections, mais plus sûres.</p>
+        </div>
+        <div class="classes" id="classes"></div>
+        <div class="layers">
+          <label><input type="checkbox" id="lay-mosaic" checked> Mosaïque</label>
+          <label><input type="checkbox" id="lay-dets" checked> Détections</label>
+          <label><input type="checkbox" id="lay-foot"> Emprises des photos</label>
+          <label><input type="checkbox" id="lay-sat" checked> Fond satellite</label>
+        </div>
+        <div class="downloads" id="downloads"></div>
+        <div class="row">
+          <button class="btn" id="btn-folder">Ouvrir le dossier des résultats</button>
+          <button class="btn ghost" id="btn-new">Nouveau traitement</button>
+        </div>
+        <details class="method">
+          <summary>Comment lire ces chiffres</summary>
+          <p>Chaque déchet n'est compté qu'une fois : les photos sont recalées entre elles à quelques centimètres près, et les détections d'un même objet sur les différentes photos qui le voient sont fusionnées en une seule. Le score combine les deux meilleures vues : un objet reconnu sur une seule photo doit l'être avec plus d'assurance. La surface vient du contour de la vue la plus sûre et de la résolution au sol de la photo.</p>
+          <p>Le modèle ne voit pas tout : sur le banc de test, le modèle 1 classe retrouve environ 55 % des déchets annotés par un humain, surtout ceux de plus de 20 cm. Les chiffres sont donc des estimations basses du nombre réel.</p>
+          <p>Le poids est un ordre de grandeur : surface × densité apparente propre à chaque type, tirée de la littérature, pas encore validée par une pesée sur le terrain.</p>
+          <p id="align-info"></p>
+        </details>
+      </div>
+    </section>
+    <footer class="foot" id="foot"></footer>
+  </aside>
+
+  <main class="map-wrap">
+    <div id="map"></div>
+    <div class="map-legend" id="legend" hidden></div>
+    <div class="map-hint" id="map-hint">Choisissez un dossier de photos pour commencer.</div>
+  </main>
+</div>
+<script src="/static/vendor/leaflet.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,17 +1,17 @@
 {
  "note": "Groupes d'images parentes qui se recouvrent sur le terrain : split_dataset.py place chaque groupe entier dans un seul split. Généré par src/data/diagnostics/spatial_groups.py - ne pas éditer à la main, relancer après l'ajout d'un lot.",
- "generated": "2026-10-09",
+ "generated": "2026-10-12",
  "rules": {
   "block_cells": 4,
   "min_ortho_overlap": 0.02,
-  "min_photo_overlap": 0.05
+  "photo_gps_margin_m": 5.0
  },
  "imagette_neighbour_pairs": {
   "same_block": 689,
   "cross_block": 210
  },
- "n_groups": 54,
- "n_grouped_images": 519,
+ "n_groups": 59,
+ "n_grouped_images": 530,
  "groups": {
   "grp:SB_4_images_Train_tuilage_StBrandonTransect_4_StBrandonTransect_4_y3696_x7392": [
    "SB_4_images_Train_tuilage_StBrandonTransect_4_StBrandonTransect_4_y3696_x7392",
@@ -632,13 +632,34 @@
    "A_LEG1_15h46_16h02_n_images_train_DJI_0053",
    "A_LEG1_15h46_16h02_n_images_train_DJI_0152"
   ],
+  "grp:SL_W1_n_images_train_DJI_0163": [
+   "SL_W1_n_images_train_DJI_0163",
+   "SL_W1_n_images_train_DJI_0174"
+  ],
   "grp:SL_W3_n_images_train_DJI_0092": [
    "SL_W3_n_images_train_DJI_0092",
    "SL_W4_n_images_train_DJI_0564"
   ],
+  "grp:SL_W3_n_images_train_DJI_0072": [
+   "SL_W3_n_images_train_DJI_0072",
+   "SL_W3_n_images_train_DJI_0077"
+  ],
   "grp:A_LEG3_12102025_17H03-18H13_101MEDIA_nn_images_train_DJI_0112": [
    "A_LEG3_12102025_17H03-18H13_101MEDIA_nn_images_train_DJI_0112",
    "A_LEG3_12102025_17H03-18H13_101MEDIA_nn_images_train_DJI_0118"
+  ],
+  "grp:SL_W4_b_n_images_train_DJI_0744": [
+   "SL_W4_b_n_images_train_DJI_0744",
+   "SL_W4_b_n_images_train_DJI_0755",
+   "SL_W4_b_n_images_train_DJI_0760"
+  ],
+  "grp:SL_W7_n_images_train_DJI_0316": [
+   "SL_W7_n_images_train_DJI_0316",
+   "SL_W7_n_images_train_DJI_0321"
+  ],
+  "grp:SL_W7_n_images_train_DJI_0289": [
+   "SL_W7_n_images_train_DJI_0289",
+   "SL_W7_n_images_train_DJI_0294"
   ]
  },
  "overlap_evidence": [
@@ -668,9 +689,45 @@
   },
   {
    "rule": "photo",
+   "a": "SL_W1_n_images_train_DJI_0163",
+   "b": "SL_W1_n_images_train_DJI_0174",
+   "overlap": 0.0
+  },
+  {
+   "rule": "photo",
    "a": "SL_W3_n_images_train_DJI_0092",
    "b": "SL_W4_n_images_train_DJI_0564",
    "overlap": 0.307
+  },
+  {
+   "rule": "photo",
+   "a": "SL_W3_n_images_train_DJI_0072",
+   "b": "SL_W3_n_images_train_DJI_0077",
+   "overlap": 0.0
+  },
+  {
+   "rule": "photo",
+   "a": "SL_W4_b_n_images_train_DJI_0744",
+   "b": "SL_W4_b_n_images_train_DJI_0760",
+   "overlap": 0.387
+  },
+  {
+   "rule": "photo",
+   "a": "SL_W4_b_n_images_train_DJI_0755",
+   "b": "SL_W4_b_n_images_train_DJI_0760",
+   "overlap": 0.0
+  },
+  {
+   "rule": "photo",
+   "a": "SL_W7_n_images_train_DJI_0321",
+   "b": "SL_W7_n_images_train_DJI_0316",
+   "overlap": 0.0
+  },
+  {
+   "rule": "photo",
+   "a": "SL_W7_n_images_train_DJI_0289",
+   "b": "SL_W7_n_images_train_DJI_0294",
+   "overlap": 0.0
   }
  ]
 }

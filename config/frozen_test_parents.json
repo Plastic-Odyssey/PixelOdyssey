@@ -83,7 +83,7 @@
     "SB_5_images_Train_tuilage_StBrandonTransect_5_StBrandonTransect_5_y924_x6468",
     "SL_11-16_images_train_transect_16",
     "SL_17-25_images_train_transect_22",
-    "SL_6-10_26-27_images_train_transect26",
+    "SL_6-10_26-27_images_train_transect_26",
     "SL_W1_n_images_train_DJI_0085",
     "SL_W1_n_images_train_DJI_0220",
     "SL_W3_n_images_train_DJI_0092"
@@ -94,6 +94,22 @@
       "renamed": {
         "A_LEG1_1452_1511_images_train_DJI_0932": "A_LEG1_1452_1511_nn_images_train_DJI_0932"
       }
+    },
+    {
+      "date": "20261012_182835",
+      "renamed": {
+        "SL_6-10_26-27_images_train_transect26": "SL_6-10_26-27_images_train_transect_26"
+      }
+    }
+  ],
+  "verite_terrain": [
+    {
+      "date": "2026-10-18T01:19:20",
+      "source": "revue sans CVAT (src/review/revue_banc.py)",
+      "dossier": "5. Tests\\revue_banc_v3",
+      "ajouts": 134,
+      "zones_ignorees": 0,
+      "retraits": 1
     }
   ]
 }

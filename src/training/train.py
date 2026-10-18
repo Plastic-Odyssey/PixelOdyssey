@@ -209,6 +209,42 @@ OVERLAP_MASK = False
 # mosaic (défaut Ultralytics 1.0, close_mosaic=10) : actif à son maximum sur tous les runs du projet,
 # jamais désactivé ni testé comme variable.
 
+# --- Recettes nommées (12/10/2026) --------------------------------------------
+# "v3" = les constantes ci-dessus (recette de toutes les campagnes jusqu'au 11/10/2026), toujours
+# utilisée par défaut. "v4" = recette du protocole v4 (--recette v4), à utiliser avec les datasets
+# config/data_config*_v4.yaml. Ce qui change par rapport à v3, et pourquoi :
+#   - epochs 200 (100 avant) : les tuiles v4 sont ~45 % moins nombreuses (recouvrement 128 px au lieu
+#     de 256), 200 epochs v4 font donc à peu près autant de pas d'apprentissage que 100 epochs v3 ; le
+#     mono v3 progressait encore à l'epoch 95/100. Pas d'arrêt anticipé (patience 0).
+#   - optimiseur AdamW et taux fixés EXPLICITEMENT, à la valeur que choisissait `optimizer=auto`
+#     (0,002 x 5 / (4 + nombre de classes) : 0,002 en mono, 0,000909 en multi). En automatique,
+#     Ultralytics bascule sur MuSGD lr 0,01 dès 10 000 itérations : un simple changement d'epochs ou de
+#     taille de dataset changeait d'optimiseur sans prévenir.
+#   - overlap_mask revient au défaut Ultralytics (True) : seulement 3 % des contours se chevauchent (SL,
+#     0,5 % à A, 0,3 % à SB - mesuré le 12/10/2026), le réglage n'a presque pas d'effet ; le test du
+#     28/08 (False) n'avait pas montré de gain net, et True consomme moins de mémoire (utile en small).
+#   - augmentations inchangées : celles qui ont fait leurs preuves (rotation 180°, retournements,
+#     mosaïque, échelle, couleurs par défaut) ; copy_paste, mixup et cls_pw restent à 0 (aucun gain
+#     mesuré sur le test). Pas d'augmentation de contraste : les orthos d'entraînement sont déjà aussi
+#     ternes que le vol W5 (écart-type de luminance 13 à 25, contre 19 pour W5).
+RECETTES = {
+    "v3": dict(epochs=EPOCHS, imgsz=IMGSZ, batch=BATCH, patience=PATIENCE, degrees=DEGREES, flipud=FLIPUD,
+               copy_paste=COPY_PASTE, copy_paste_mode=COPY_PASTE_MODE, cls_pw=CLS_PW, mixup=MIXUP,
+               overlap_mask=OVERLAP_MASK),
+    "v4": dict(epochs=200, imgsz=640, batch=16, patience=0, degrees=180.0, flipud=0.5, fliplr=0.5,
+               mosaic=1.0, close_mosaic=10, scale=0.5, translate=0.1, hsv_h=0.015, hsv_s=0.7, hsv_v=0.4,
+               copy_paste=0.0, copy_paste_mode="flip", cls_pw=0.0, mixup=0.0, overlap_mask=True,
+               optimizer="AdamW", lr0="auto_fit", cos_lr=False, seed=0, deterministic=True),
+}
+
+
+def _lr_fit(config_path: Path) -> float:
+    """Taux que choisirait `optimizer=auto` en AdamW : 0,002 x 5 / (4 + nombre de classes)."""
+    with open(config_path, "r", encoding="utf-8") as f:
+        nc = len((yaml.safe_load(f) or {}).get("names", {})) or 1
+    return round(0.002 * 5 / (4 + nc), 6)
+
+
 # --- Étiquette libre pour retrouver ce run dans TRAINING_RUNS_DIR ----------
 # Sert uniquement à la lisibilité du nom de dossier - mets ce que tu veux,
 # par ex. "baseline", "test_yolov8s", "sans_class_nonplastique", etc.
@@ -323,6 +359,9 @@ def launch_training(
     run_tag: str = RUN_TAG,
     skip_viz: bool = False,
     viz_limit: Optional[int] = None,
+    model_weights: Optional[str] = None,
+    epochs: Optional[int] = None,
+    recette: str = "v3",
 ):
     """`config_path` : référentiel de classes/dataset à utiliser (défaut : config/data_config.yaml).
     Pour une variante expérimentale (ex: config/variants/data_config_no_debris.yaml, qui pointe vers son
@@ -350,13 +389,19 @@ def launch_training(
 
     `viz_limit` : nombre max d'images du split test à annoter (défaut : toutes) - utile pour un
     coup d'oeil rapide sur un gros split test sans attendre l'inférence sur chaque image."""
-    run_name = _build_run_name(MODEL_WEIGHTS, run_tag)
+    if recette not in RECETTES:
+        raise ValueError(f"Recette inconnue '{recette}' (disponibles : {', '.join(RECETTES)}).")
+    if recette != "v3" and default_augment:
+        raise ValueError("--default-augment ne se combine qu'avec la recette v3.")
+    model_weights = model_weights or MODEL_WEIGHTS
+    run_name = _build_run_name(model_weights, run_tag)
     run_dir = OUTPUT_DIR / run_name
 
     resolved_device = _resolve_device(DEVICE)
 
     print("--- 🏋️ INITIALISATION DE L'ENTRAÎNEMENT PIXELODYSSEY ---")
-    print(f"Modèle              : {MODEL_WEIGHTS}")
+    print(f"Modèle              : {model_weights}")
+    print(f"Recette             : {recette}")
     print(f"Config data          : {config_path}")
     print(f"Device               : {resolved_device}")
     print(f"Dossier de sortie    : {run_dir}")
@@ -366,7 +411,7 @@ def launch_training(
 
     # YOLO(...) télécharge automatiquement le poids pré-entraîné si besoin -
     # plus de gestion manuelle d'URL/urllib comme dans l'ancienne version.
-    model = YOLO(str(PRETRAINED_DIR / MODEL_WEIGHTS))
+    model = YOLO(str(PRETRAINED_DIR / model_weights))
 
     resolved_config = _prepare_resolved_data_config(config_path, run_dir)
 
@@ -382,7 +427,7 @@ def launch_training(
     # sait exactement ce qu'on vient d'y mettre (juste ce yaml) : si `run_dir` contient
     # autre chose que ça, c'est le signe d'un VRAI run antérieur au même nom (le cas
     # extrême que le garde-fou d'origine visait) - on doit bloquer plutôt qu'écraser.
-    unexpected_entries = sorted(p.name for p in run_dir.iterdir() if p.name != "resolved_data_config.yaml")
+    unexpected_entries = sorted(p.name for p in run_dir.iterdir() if p.name not in ("resolved_data_config.yaml", "recette.json"))
     if unexpected_entries:
         raise RuntimeError(
             f"🛑 {run_dir} contient déjà {unexpected_entries} - probablement un run "
@@ -428,7 +473,21 @@ def launch_training(
         # protégeait à l'origine (deux runs au même nom).
         exist_ok=True,
     )
-    if not default_augment:
+    if recette != "v3":
+        hp = dict(RECETTES[recette])
+        if hp.get("lr0") == "auto_fit":
+            hp["lr0"] = _lr_fit(config_path)
+        if epochs:
+            hp["epochs"] = epochs
+        train_kwargs.update(hp)
+        print("Hyperparamètres      : " + ", ".join(f"{k}={v}" for k, v in sorted(hp.items())))
+        with open(run_dir / "recette.json", "w", encoding="utf-8") as f:
+            import json as _json
+            _json.dump({"recette": recette, "modele": model_weights, "config": str(config_path),
+                        "hyperparametres": {**hp, "epochs": train_kwargs["epochs"]}}, f, indent=1, ensure_ascii=False)
+    elif epochs:
+        train_kwargs["epochs"] = epochs
+    if not default_augment and recette == "v3":
         # Augmentation choisie pour la vue nadir + rééquilibrage des classes rares -
         # voir bloc de commentaires ci-dessus. Omis entièrement si default_augment=True
         # (voir docstring de cette fonction) - Ultralytics applique alors ses propres
@@ -533,6 +592,12 @@ if __name__ == "__main__":
         "--viz-limit", type=int, default=None,
         help="Nombre max d'images du split test à annoter (défaut : toutes).",
     )
+    parser.add_argument("--model", default=None,
+                        help=f"Poids pré-entraînés (dans models/pretrained/), ex: yolo11s-seg.pt. Défaut : {MODEL_WEIGHTS}.")
+    parser.add_argument("--epochs", type=int, default=None, help="Remplace le nombre d'epochs de la recette.")
+    parser.add_argument("--recette", default="v3", choices=sorted(RECETTES),
+                        help="Jeu d'hyperparamètres : v3 (défaut, constantes en tête de fichier) ou v4 (protocole "
+                             "du 12/10/2026, avec les datasets config/data_config*_v4.yaml).")
     args = parser.parse_args()
     launch_training(
         config_path=Path(args.config),
@@ -540,4 +605,7 @@ if __name__ == "__main__":
         run_tag=args.tag,
         skip_viz=args.skip_viz,
         viz_limit=args.viz_limit,
+        model_weights=args.model,
+        epochs=args.epochs,
+        recette=args.recette,
     )

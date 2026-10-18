@@ -26,9 +26,13 @@ Trois règles, toutes calculées sur les images de 1_annotated_dataset :
      alpha, sinon pixels non noirs) se recouvrent sur au moins MIN_ORTHO_OVERLAP de la
      surface valide de la plus petite.
   3. Photos drone avec GPS (EXIF/XMP, via src/application) : regroupées si leurs
-     empreintes au sol se recouvrent sur au moins MIN_PHOTO_OVERLAP de la plus petite.
+     empreintes au sol, élargies de PHOTO_GPS_MARGIN_M (erreur GPS), se touchent (depuis le
+     12/10/2026 ; avant : recouvrement d'au moins MIN_PHOTO_OVERLAP de la plus petite).
      Empreinte calculée comme dans l'application (terrain plat, nadir), une origine
      locale par site.
+Les recouvrements résiduels entre images de splits différents (imagettes de deux blocs,
+orthos voisines sous 2 %, photo et ortho d'un même site) ne sont pas regroupés : le
+protocole v4 les noircit dans l'image la moins prioritaire (src/data/utils/ground_overlap.py).
 Les regroupements sont transitifs (union-find). Les règles 2 et 3 comparent toutes les
 images d'un même SITE, y compris entre deux lots (08/10/2026 : deux missions de Santa Luzia
 se recouvrent) ; split_dataset.py rattache alors le groupe au lot de son membre le plus
@@ -62,7 +66,12 @@ from src.data.utils.split_dataset import RAW_DIR, SPLIT_GROUPS_PATH
 
 BLOCK_CELLS = 4  # 24/09/2026 : 50 blocs SB, 23 % des paires voisines entre deux blocs (32 % à 3x3, 50 % à 2x2)
 MIN_ORTHO_OVERLAP = 0.02
-MIN_PHOTO_OVERLAP = 0.05
+MIN_PHOTO_OVERLAP = 0.05  # règle jusqu'au 12/10/2026 (remplacée par la marge GPS ci-dessous)
+# 12/10/2026 (protocole v4) : deux photos sont regroupées dès que leurs empreintes, élargies de
+# l'erreur GPS possible, se touchent - même sans recouvrement calculé. Mesuré sur les 44 photos :
+# 9 paires (4 de plus qu'avec le seuil de 5 %), une seule touche le banc de test (SL W3 n / DJI_0092
+# et SL W4 n / DJI_0564, déjà en quarantaine). Même marge que src/data/utils/ground_overlap.py.
+PHOTO_GPS_MARGIN_M = 5.0
 ORTHO_GRID_M = 0.05  # résolution de la grille de comparaison des orthos (5 cm)
 TILE_NAME_RE = re.compile(r"^(?P<prefix>.+)_y(?P<y>\d+)_x(?P<x>\d+)$")
 
@@ -210,11 +219,11 @@ def _photo_pairs(parents: List[Dict], sensor_registry_path: Path) -> List[Tuple[
         for (pa, ba, ga), (pb, bb, gb) in itertools.combinations(polys, 2):
             # Toutes les paires du site, y compris entre deux lots (08/10/2026) : SL W3 n / DJI_0092
             # (banc de test) et SL W4 n / DJI_0564 se recouvrent à 31 %.
-            if not ga.intersects(gb):
+            if not ga.buffer(PHOTO_GPS_MARGIN_M).intersects(gb):
                 continue
+            # Part de recouvrement SANS marge (0 possible : photos voisines à moins de la marge GPS).
             ratio = ga.intersection(gb).area / max(1e-9, min(ga.area, gb.area))
-            if ratio >= MIN_PHOTO_OVERLAP:
-                pairs.append((pa, pb, float(ratio)))
+            pairs.append((pa, pb, float(ratio)))
     return pairs
 
 
@@ -247,7 +256,8 @@ def build_split_groups(raw_dir: Path = Path(RAW_DIR), output: Path = SPLIT_GROUP
     for a, b, r in photo:
         uf.union(a, b)
         evidence.append({"rule": "photo", "a": a, "b": b, "overlap": round(r, 3)})
-    print(f"  • Photos drone : {len(photo)} paire(s) recouvrante(s) (>= {MIN_PHOTO_OVERLAP:.0%}).")
+    print(f"  • Photos drone : {len(photo)} paire(s) dont les empreintes se touchent à {PHOTO_GPS_MARGIN_M:g} m près "
+          f"(erreur GPS).")
 
     members_by_root: Dict[str, List[str]] = defaultdict(list)
     for p in parents:
@@ -260,7 +270,7 @@ def build_split_groups(raw_dir: Path = Path(RAW_DIR), output: Path = SPLIT_GROUP
                  "l'ajout d'un lot."),
         "generated": date.today().isoformat(),
         "rules": {"block_cells": BLOCK_CELLS, "min_ortho_overlap": MIN_ORTHO_OVERLAP,
-                  "min_photo_overlap": MIN_PHOTO_OVERLAP},
+                  "photo_gps_margin_m": PHOTO_GPS_MARGIN_M},
         "imagette_neighbour_pairs": {"same_block": same, "cross_block": cross},
         "n_groups": len(groups),
         "n_grouped_images": sum(len(v) for v in groups.values()),

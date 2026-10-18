@@ -53,3 +53,6 @@ desktop.ini
 .vscode/*
 !.vscode/settings.json
 !.vscode/launch.json
+
+# Page de l'application (sinon ignoree par *.html ci-dessus : l'application serait cassee apres un clone)
+!src/app/static/index.html

@@ -77,6 +77,15 @@ source à sa copie, taille + date). Toute différence (annotation corrigée ou
 complétée dans 1_annotated_dataset) met la copie à jour, et `run_split` renvoie la
 liste de ces parents pour que data_pipeline.py invalide leurs copies/tuiles en aval.
 Les fichiers de parents disparus du brut (ou changés de split) sont retirés.
+
+Protocole v4 (12/10/2026, options `inpaint_splits` et `mask_shared_ground`, activées par la
+section `protocole_v4` des config/data_config*_v4.yaml - voir data_pipeline.py) :
+  - les objets des classes à effacer (Inconnu) ne le sont qu'en train/val : le test garde
+    les images d'origine, ces objets y deviennent des zones ignorées à l'évaluation ;
+  - le terrain partagé avec une image d'un split plus prioritaire (test > val > train) est
+    noirci dans la copie et déclaré dans `nodata_masks/<split>/<parent_id>.png` (voir
+    src/data/utils/ground_overlap.py) ; rapport dans `.shared_ground_report.json`.
+Sans ces options, comportement et empreintes strictement identiques à avant.
 """
 
 import argparse
@@ -398,6 +407,9 @@ ITEMS_LOGIC_VERSION = 4
 #        effacés de l'image par inpainting (cv2.INPAINT_TELEA, rayon 5).
 INPAINT_LOGIC_VERSION = 1
 
+# Protocole v4 (12/10/2026) : masquage du terrain partagé entre splits (voir ground_overlap.py).
+SHARED_GROUND_REPORT_FILENAME = ".shared_ground_report.json"
+
 
 def _inpaint_excluded_copy(
     img_src: Path, label_path: Path, local_names: Dict[int, str], class_taxonomy,
@@ -454,6 +466,58 @@ def _inpaint_excluded_copy(
     return len(polys)
 
 
+def _write_modified_copy(
+    img_src: Path, label_path: Path, local_names: Dict[int, str], class_taxonomy,
+    names_to_inpaint: set, zone_polys: List, img_dst: Path,
+) -> Dict:
+    """Protocole v4 : copie de `img_src` vers `img_dst` avec (1) effacement des objets des classes
+    `names_to_inpaint` (même règle que `_inpaint_excluded_copy`) et (2) noircissement des zones de
+    terrain partagé `zone_polys` (polygones en pixels, voir ground_overlap.py). Sans rien à
+    modifier : simple copie (copy2). Retourne {"effaces": n, "masque_px": n}."""
+    import cv2
+    import numpy as np
+    from src.data.utils.image_io import load_image_bgr
+
+    polys = []
+    if names_to_inpaint and label_path.exists():
+        with open(label_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 7:
+                    continue
+                name = local_names.get(int(parts[0]))
+                if name is None or normalize_class_name(name) not in names_to_inpaint:
+                    continue
+                if resolve_class_name(name, class_taxonomy) != EXCLUDE:
+                    continue  # garde-fou : on n'efface JAMAIS une classe retenue
+                polys.append([float(v) for v in parts[1:]])
+    if not polys and not zone_polys:
+        shutil.copy2(img_src, img_dst)
+        return {"effaces": 0, "masque_px": 0}
+    img = load_image_bgr(img_src)
+    if img is None:
+        raise RuntimeError(f"Image illisible : {img_src}")
+    h, w = img.shape[:2]
+    if polys:
+        mask = np.zeros((h, w), dtype=np.uint8)
+        for xy in polys:
+            pts = np.array([[xy[i] * w, xy[i + 1] * h] for i in range(0, len(xy) - 1, 2)], dtype=np.int32)
+            cv2.fillPoly(mask, [pts], 255)
+        mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        img = cv2.inpaint(img, mask, 5, cv2.INPAINT_TELEA)
+    n_masked = 0
+    if zone_polys:
+        from src.data.utils.ground_overlap import rasterize_zones
+        zm = rasterize_zones(zone_polys, w, h)
+        img[zm] = 0
+        n_masked = int(zm.sum())
+    ext = img_dst.suffix.lower()
+    params = [cv2.IMWRITE_JPEG_QUALITY, 98] if ext in (".jpg", ".jpeg") else []
+    if not cv2.imwrite(str(img_dst), img, params):
+        raise RuntimeError(f"Écriture impossible : {img_dst}")
+    return {"effaces": len(polys), "masque_px": n_masked}
+
+
 def _load_frozen_test_ids() -> List[str]:
     """Charge la liste de parent_id épinglés en test (voir FROZEN_TEST_PATH).
 
@@ -484,7 +548,8 @@ def _load_frozen_test_ids() -> List[str]:
 def _split_params(
     class_taxonomy, target_names: Dict[int, str], frozen_test_ids: List[str], balance_by: str,
     site_filter: Optional[List[str]] = None, inpaint_excluded: Optional[List[str]] = None,
-    split_groups: Optional[Dict[str, str]] = None,
+    split_groups: Optional[Dict[str, str]] = None, inpaint_splits: Optional[List[str]] = None,
+    mask_shared_ground: bool = False,
 ) -> Dict:
     """Paramètres qui influencent la sortie de cette étape (garde-fou de cache)."""
     extra = {"items_logic_version": ITEMS_LOGIC_VERSION} if balance_by == "items" else {}
@@ -498,6 +563,11 @@ def _split_params(
     if inpaint_excluded:
         extra["inpaint_excluded"] = sorted(inpaint_excluded)
         extra["inpaint_logic_version"] = INPAINT_LOGIC_VERSION
+        if inpaint_splits:
+            extra["inpaint_splits"] = sorted(inpaint_splits)
+    if mask_shared_ground:
+        from src.data.utils.ground_overlap import GPS_MARGIN_M, LOGIC_VERSION as GO_VERSION, ORTHO_MARGIN_M
+        extra["shared_ground"] = {"version": GO_VERSION, "gps_margin_m": GPS_MARGIN_M, "ortho_margin_m": ORTHO_MARGIN_M}
     return {
         **extra,
         "split_logic_version": SPLIT_LOGIC_VERSION,
@@ -602,8 +672,15 @@ def run_split(
     inpaint_excluded: Optional[List[str]] = None,
     dry_run: bool = False,
     allow_mass_removal: bool = False,
+    inpaint_splits: Optional[List[str]] = None,
+    mask_shared_ground: bool = False,
 ):
     """Voir la docstring du module.
+
+    `inpaint_splits` (protocole v4) : splits où l'effacement `inpaint_excluded` s'applique
+    (ex: ["train", "val"]) ; None = tous (comportement du 23/09/2026).
+    `mask_shared_ground` (protocole v4) : noircit le terrain partagé avec un split plus
+    prioritaire (voir ground_overlap.py) et écrit les masques de nodata correspondants.
 
     `dry_run` (23/09/2026) : calcule et AFFICHE ce que ce run ferait (nouveaux parents,
     parents mis à jour, fichiers périmés à retirer, reconstruction complète éventuelle)
@@ -668,7 +745,7 @@ def run_split(
 
     split_groups = _load_split_groups()
     params = _split_params(class_taxonomy, target_names, frozen_test_ids, balance_by, site_filter, inpaint_names,
-                           split_groups)
+                           split_groups, inpaint_splits=inpaint_splits, mask_shared_ground=mask_shared_ground)
     if dry_run:
         from src.data.utils.pipeline_utils import diff_params, fingerprint
         mpath = Path(split_dir) / MANIFEST_FILENAME
@@ -867,6 +944,24 @@ def run_split(
             )
     unique_parents = [it for it in unique_parents if it["parent_id"] not in quarantined]
     n_total = len(unique_parents)
+
+    # Protocole v4 : terrain partagé avec une image d'un split plus prioritaire (voir ground_overlap.py).
+    shared_zones: Dict[str, List] = {}
+    shared_report = None
+    if mask_shared_ground:
+        from src.data.utils.ground_overlap import compute_cross_split_zones
+        sensor_path = Path(__file__).resolve().parents[3] / "config" / "sensor_specs.yaml"
+        shared_zones, shared_report = compute_cross_split_zones(unique_parents, split_map, sensor_path)
+        shared_report["quarantaine"] = dict(sorted(quarantined.items()))
+        by_type: Dict[str, int] = defaultdict(int)
+        for pr in shared_report["paires"]:
+            by_type[f"{pr['split_masquee']}<-{pr['split_prioritaire']}"] += 1
+        print(f"🧱 Terrain partagé entre splits : {len(shared_report['paires'])} paire(s) "
+              f"({', '.join(f'{k} {v}' for k, v in sorted(by_type.items())) or 'aucune'}) -> zones noircies dans "
+              f"{len(shared_zones)} image(s) du split le moins prioritaire.")
+        if shared_report["non_verifiables"]:
+            print(f"  ℹ️  {len(shared_report['non_verifiables'])} image(s) sans géoréférence, non vérifiables : "
+                  f"{', '.join(shared_report['non_verifiables'][:4])}")
     print(f"--- 📦 SPLIT ÉTANCHE, STRATIFIÉ PAR LOT ({n_total} images parentes, {len(parents_by_batch)} lots, "
           f"équilibrage par {'ITEMS' if balance_by == 'items' else 'images'}) ---")
     if frozen_test_ids:
@@ -920,6 +1015,17 @@ def run_split(
         img_dst = Path(split_dir) / "images" / split / f"{parent_id}{img_src.suffix.lower()}"
         lab_dst = Path(split_dir) / "labels" / split / f"{parent_id}.txt"
 
+        # Protocole v4 : copie modifiée (effacement limité à certains splits, zones de terrain partagé).
+        inpaint_here = bool(inpaint_names) and (inpaint_splits is None or split in inpaint_splits)
+        zones_here = shared_zones.get(parent_id, [])
+        copy_digest = None
+        if inpaint_splits is not None or mask_shared_ground:
+            if inpaint_here or zones_here:
+                copy_digest = hashlib.sha1(json.dumps({"inpaint": inpaint_names if inpaint_here else [],
+                                                       "zones": zones_here}, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+            parent_manifest[parent_id]["copy_digest"] = copy_digest
+            parent_manifest[parent_id]["n_shared_zones"] = len(zones_here)
+
         if batch_name not in local_names_by_batch:
             # Le data.yaml d'un lot vit à sa racine (ex: "SL 11-16/data.yaml"),
             # reconstruit à partir de raw_dir + batch_name.
@@ -945,7 +1051,14 @@ def run_split(
             plan.append(("new", item, img_dst, lab_dst, out_lines, True))
             continue
         label_unchanged = lab_dst.exists() and _same_label_content(lab_dst, out_lines)
-        if inpaint_names:
+        if inpaint_splits is not None or mask_shared_ground:
+            prev = previous_manifest.get(parent_id) or {}
+            regenerate = not (prev.get("src_size") == src_stat.st_size
+                              and abs(prev.get("src_mtime", -1e9) - src_stat.st_mtime) <= 2.0
+                              and prev.get("raw_label_sha1") == raw_digest
+                              and prev.get("copy_digest", "absent") == copy_digest
+                              and (copy_digest is not None or _same_file_stat(img_src, img_dst)))
+        elif inpaint_names:
             # Copie non byte-identique : comparaison à l'état de la source mémorisé au run
             # précédent. Un label BRUT modifié (même sur une classe effacée, absente du label
             # traduit) change les zones à effacer -> image régénérée.
@@ -999,7 +1112,16 @@ def run_split(
         img_dst.parent.mkdir(parents=True, exist_ok=True)
         lab_dst.parent.mkdir(parents=True, exist_ok=True)
         if regenerate:
-            if inpaint_names:
+            if inpaint_splits is not None or mask_shared_ground:
+                pid = item["parent_id"]
+                split_here = split_map[pid]
+                _write_modified_copy(
+                    Path(item["img_path"]), Path(item["label_path"]), local_names_by_batch[item["batch"]],
+                    class_taxonomy,
+                    set(inpaint_names) if (inpaint_names and (inpaint_splits is None or split_here in inpaint_splits)) else set(),
+                    shared_zones.get(pid, []), img_dst,
+                )
+            elif inpaint_names:
                 _inpaint_excluded_copy(
                     Path(item["img_path"]), Path(item["label_path"]), local_names_by_batch[item["batch"]],
                     class_taxonomy, set(inpaint_names), img_dst,
@@ -1013,6 +1135,30 @@ def run_split(
     for split in ("train", "val", "test"):
         for kind in ("images", "labels"):
             (Path(split_dir) / kind / split).mkdir(parents=True, exist_ok=True)
+
+    if mask_shared_ground:
+        # Masques de nodata explicites (lus par le tuilage v4) : réécrits à chaque run (peu coûteux),
+        # masques périmés retirés.
+        from PIL import Image as _PILImage
+        from src.data.utils.ground_overlap import NODATA_MASK_DIR, nodata_mask_path, rasterize_zones, write_nodata_mask
+        expected = set()
+        for item in unique_parents:
+            pid = item["parent_id"]
+            zones_here = shared_zones.get(pid, [])
+            if not zones_here:
+                continue
+            path = nodata_mask_path(Path(split_dir), split_map[pid], pid)
+            with _PILImage.open(item["img_path"]) as _im:
+                w_, h_ = _im.size
+            write_nodata_mask(rasterize_zones(zones_here, w_, h_), path)
+            expected.add(path.resolve())
+        mroot = Path(split_dir) / NODATA_MASK_DIR
+        if mroot.exists():
+            for f in mroot.rglob("*.png"):
+                if f.resolve() not in expected:
+                    f.unlink()
+        with open(Path(split_dir) / SHARED_GROUND_REPORT_FILENAME, "w", encoding="utf-8") as f:
+            json.dump(shared_report, f, indent=1, ensure_ascii=False)
 
     with open(Path(split_dir) / PARENT_MANIFEST_FILENAME, "w", encoding="utf-8") as f:
         json.dump(parent_manifest, f, indent=2, ensure_ascii=False)
@@ -1075,6 +1221,10 @@ if __name__ == "__main__":
              "laisser visibles comme du fond, séparés par des virgules (ex: \"Inconnu,à déterminer\"). "
              "Variante expérimentale : fournis AUSSI --split-dir.",
     )
+    parser.add_argument("--inpaint-splits", default=None,
+                        help="(Protocole v4) Splits où l'effacement --inpaint-excluded s'applique, ex: train,val.")
+    parser.add_argument("--mask-shared-ground", action="store_true",
+                        help="(Protocole v4) Noircit le terrain partagé avec un split plus prioritaire.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Affiche ce que ce run ferait (nouveaux/mis à jour/retirés) sans rien écrire.")
     parser.add_argument("--allow-mass-removal", action="store_true",
@@ -1087,6 +1237,8 @@ if __name__ == "__main__":
             force=args.force, split_dir=args.split_dir, class_config_path=args.config,
             balance_by=args.balance_by, site_filter=site_filter, inpaint_excluded=inpaint_excluded,
             dry_run=args.dry_run, allow_mass_removal=args.allow_mass_removal,
+            inpaint_splits=[s.strip() for s in args.inpaint_splits.split(",")] if args.inpaint_splits else None,
+            mask_shared_ground=args.mask_shared_ground,
         )
     except RuntimeError as e:
         print(str(e))
